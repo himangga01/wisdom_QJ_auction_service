@@ -13,6 +13,7 @@ from app.crawler.navigation import validate_internal_article_href
 from app.crawler.selectors import SELECTOR_VERSION
 from app.crawler.types import CrawlPayload, ListingDetail, MarketDetails
 from app.domain.aggregator import AggregatedListingInfo, aggregate_broker_articles
+from app.domain.apartment_details import normalize_apartment_details
 from app.domain.comparator import (
     ComparableListing,
     compare_listings,
@@ -73,6 +74,9 @@ class _ExistingRecord:
     latest_snapshot: ListingSnapshot | None
     latest_aggregate: ListingAggregate | None
     latest_article_ids: frozenset[str]
+    source_seen: bool
+    source_state: str
+    source_missing_count: int
     latest_collect_broker_details: bool = True
 
 
@@ -96,16 +100,31 @@ def _collect_broker_details_enabled(run: object) -> bool:
     return True if value is None else bool(value)
 
 
+def _merge_current_apartment_details(
+    current: dict[str, object], incoming: dict[str, object]
+) -> dict[str, object]:
+    merged, _ = normalize_apartment_details(current)  # type: ignore[arg-type]
+    normalized_incoming, _ = normalize_apartment_details(incoming)  # type: ignore[arg-type]
+    merged.update(normalized_incoming)
+    return merged
+
+
 def _comparable_json(value: ComparableListing) -> dict[str, object]:
     return {
         "price": value.price,
         "deposit": value.deposit,
         "monthlyRent": value.monthly_rent,
-        "managementFee": value.management_fee,
-        "moveInDate": value.move_in_date,
+        "building": value.building,
         "floor": value.floor,
         "direction": value.direction,
+        "supplyAreaM2": value.supply_area_m2,
+        "exclusiveAreaM2": value.exclusive_area_m2,
+        "managementFee": value.management_fee,
+        "moveInDate": value.move_in_date,
+        "roomBathroom": value.room_bathroom,
+        "loan": value.loan,
         "optionTags": sorted(value.option_tags),
+        "registrationCount": value.registration_count,
         "articleIds": sorted(value.article_ids),
     }
 
@@ -132,11 +151,23 @@ def _incoming_comparable(
         price=listing.price,
         deposit=listing.deposit,
         monthly_rent=listing.monthly_rent,
-        management_fee=aggregate.management_fee_summary,
-        move_in_date=aggregate.move_in_summary,
+        building=listing.building,
         floor=listing.floor,
         direction=listing.direction,
+        supply_area_m2=(
+            float(listing.supply_area) if listing.supply_area is not None else None
+        ),
+        exclusive_area_m2=(
+            float(listing.exclusive_area)
+            if listing.exclusive_area is not None
+            else None
+        ),
+        management_fee=aggregate.management_fee_summary,
+        move_in_date=aggregate.move_in_summary,
+        room_bathroom=aggregate.room_bath_summary,
+        loan=aggregate.loan_summary,
         option_tags=tuple(sorted(aggregate.option_tags)),
+        registration_count=aggregate.source_count,
         article_ids=listing.article_ids,
     )
 
@@ -215,6 +246,11 @@ class PersistenceService:
                 )
             ).all()
         )
+        group_ids = {group.id for group in groups}
+        source_seen_ids, source_lifecycle = await self._source_lifecycle(
+            source_id=source_id,
+            group_ids=group_ids,
+        )
         records: list[_ExistingRecord] = []
         for group in groups:
             complete_snapshot = await self._latest_complete_snapshot(
@@ -262,6 +298,11 @@ class PersistenceService:
                         if complete_snapshot is not None
                         else frozenset()
                     ),
+                    source_seen=group.id in source_seen_ids,
+                    source_state=source_lifecycle.get(group.id, ("active", 0))[0],
+                    source_missing_count=source_lifecycle.get(
+                        group.id, ("active", 0)
+                    )[1],
                     latest_collect_broker_details=(
                         _collect_broker_details_enabled(
                             await self.session.get(CrawlRun, complete_snapshot.run_id)
@@ -273,11 +314,60 @@ class PersistenceService:
             )
         return records
 
+    async def _source_lifecycle(
+        self,
+        *,
+        source_id: UUID,
+        group_ids: set[UUID],
+    ) -> tuple[set[UUID], dict[UUID, tuple[str, int]]]:
+        if not group_ids:
+            return set(), {}
+        source_seen_ids = set(
+            (
+                await self.session.scalars(
+                    select(distinct(ListingSnapshot.listing_group_id))
+                    .join(CrawlRun, CrawlRun.id == ListingSnapshot.run_id)
+                    .where(
+                        ListingSnapshot.listing_group_id.in_(group_ids),
+                        CrawlRun.source_id == source_id,
+                        CrawlRun.status.in_(("completed", "partial")),
+                    )
+                )
+            ).all()
+        )
+        event_rows = (
+            await self.session.execute(
+                select(
+                    ChangeEvent.listing_group_id,
+                    ChangeEvent.event_type,
+                )
+                .join(CrawlRun, CrawlRun.id == ChangeEvent.run_id)
+                .where(
+                    ChangeEvent.listing_group_id.in_(group_ids),
+                    CrawlRun.source_id == source_id,
+                    CrawlRun.status.in_(("completed", "partial")),
+                )
+                .order_by(ChangeEvent.detected_at.asc(), ChangeEvent.id.asc())
+            )
+        ).all()
+        lifecycle: dict[UUID, tuple[str, int]] = {}
+        for group_id, event_type in event_rows:
+            if event_type == "missing":
+                lifecycle[group_id] = ("missing", 1)
+            elif event_type == "removed":
+                lifecycle[group_id] = ("removed", 2)
+            elif event_type in {"new", "changed", "restored"}:
+                lifecycle[group_id] = ("active", 0)
+        return source_seen_ids, lifecycle
+
     async def _source_group_ids(self, source_id: UUID) -> set[UUID]:
         result = await self.session.scalars(
             select(distinct(ListingSnapshot.listing_group_id))
             .join(CrawlRun, CrawlRun.id == ListingSnapshot.run_id)
-            .where(CrawlRun.source_id == source_id, CrawlRun.status == "completed")
+            .where(
+                CrawlRun.source_id == source_id,
+                CrawlRun.status.in_(("completed", "partial")),
+            )
         )
         return set(result.all())
 
@@ -290,11 +380,25 @@ class PersistenceService:
             price=snapshot.price,
             deposit=snapshot.deposit,
             monthly_rent=snapshot.monthly_rent,
-            management_fee=(aggregate.management_fee_summary if aggregate else ""),
-            move_in_date=(aggregate.move_in_summary if aggregate else ""),
+            building=snapshot.building,
             floor=snapshot.floor,
             direction=snapshot.direction,
+            supply_area_m2=(
+                float(snapshot.supply_area)
+                if snapshot.supply_area is not None
+                else None
+            ),
+            exclusive_area_m2=(
+                float(snapshot.exclusive_area)
+                if snapshot.exclusive_area is not None
+                else None
+            ),
+            management_fee=(aggregate.management_fee_summary if aggregate else ""),
+            move_in_date=(aggregate.move_in_summary if aggregate else ""),
+            room_bathroom=(aggregate.room_bath_summary if aggregate else ""),
+            loan=(aggregate.loan_summary if aggregate else ""),
             option_tags=tuple(sorted(aggregate.option_tags_json if aggregate else [])),
+            registration_count=(aggregate.source_count if aggregate else 0),
             article_ids=record.latest_article_ids,
         )
 
@@ -432,10 +536,15 @@ class PersistenceService:
                 )
             )
             if apartment is None:
+                incoming_details, _ = normalize_apartment_details(
+                    payload.apartment.details  # type: ignore[arg-type]
+                )
                 apartment = Apartment(
                     naver_complex_id=payload.apartment.complex_id,
                     name=payload.apartment.name,
                     address=payload.apartment.address,
+                    details_json=incoming_details,
+                    details_updated_at=captured_at if incoming_details else None,
                     created_at=captured_at,
                     updated_at=captured_at,
                 )
@@ -443,7 +552,17 @@ class PersistenceService:
                 await self.session.flush()
             else:
                 apartment.name = payload.apartment.name
-                apartment.address = payload.apartment.address
+                if payload.apartment.address.strip():
+                    apartment.address = payload.apartment.address
+                incoming_details, _ = normalize_apartment_details(
+                    payload.apartment.details  # type: ignore[arg-type]
+                )
+                merged_details = _merge_current_apartment_details(
+                    apartment.details_json, incoming_details
+                )
+                if merged_details != apartment.details_json:
+                    apartment.details_json = merged_details
+                    apartment.details_updated_at = captured_at
                 apartment.updated_at = captured_at
             source.naver_complex_id = apartment.naver_complex_id
 
@@ -460,6 +579,9 @@ class PersistenceService:
             candidate_identities = [record.identity for record in existing]
 
             apartment_json = payload.apartment.model_dump(mode="json")
+            apartment_json["name"] = apartment.name
+            apartment_json["address"] = apartment.address
+            apartment_json["details"] = dict(apartment.details_json)
             self.session.add(
                 ApartmentSnapshot(
                     run_id=run.id,
@@ -494,12 +616,21 @@ class PersistenceService:
                             "한 실행의 여러 매물이 같은 listing_group으로 해석되었습니다."
                         )
                     previous = self._previous_comparable(record)
-                    transition = transition_presence(
-                        state=group.state, missing_count=group.missing_count
-                    )
-                    event_type = transition.event_type
-                    group.state = transition.state
-                    group.missing_count = transition.missing_count
+                    if not record.source_seen:
+                        event_type = "new"
+                        record.source_seen = True
+                        record.source_state = "active"
+                        record.source_missing_count = 0
+                    else:
+                        transition = transition_presence(
+                            state=record.source_state,
+                            missing_count=record.source_missing_count,
+                        )
+                        event_type = transition.event_type
+                        record.source_state = transition.state
+                        record.source_missing_count = transition.missing_count
+                    group.state = record.source_state
+                    group.missing_count = record.source_missing_count
                     group.last_seen_at = captured_at
 
                 matched_group_ids.add(group.id)
@@ -586,18 +717,21 @@ class PersistenceService:
                     )
                     event_count += 1
 
-            record_group_by_id = {record.group.id: record.group for record in existing}
+            record_by_group_id = {record.group.id: record for record in existing}
             for group_id in sorted(source_group_ids - matched_group_ids, key=str):
-                group = record_group_by_id.get(group_id)
-                if group is None:
+                record = record_by_group_id.get(group_id)
+                if record is None:
                     continue
-                before_state = group.state
-                before_count = group.missing_count
+                group = record.group
+                before_state = record.source_state
+                before_count = record.source_missing_count
                 transition = transition_absence(
-                    state=group.state,
-                    missing_count=group.missing_count,
+                    state=record.source_state,
+                    missing_count=record.source_missing_count,
                     run_status=payload.status,
                 )
+                record.source_state = transition.state
+                record.source_missing_count = transition.missing_count
                 group.state = transition.state
                 group.missing_count = transition.missing_count
                 if transition.event_type:

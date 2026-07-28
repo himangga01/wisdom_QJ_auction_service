@@ -2,7 +2,7 @@ import { useQueries, useQuery } from '@tanstack/react-query'
 import { ArrowLeft, Building2, CalendarDays, Car, Clock3, Flame, Home, LayoutGrid, List as ListIcon, TableProperties } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { adaptApartmentDetail, adaptListing, adaptListingDetail } from '../adapters/realEstate'
+import { adaptApartmentDetail, adaptListing, adaptListingAbsence, adaptListingDetail } from '../adapters/realEstate'
 import { apartmentKeys, getApartment, getApartmentListings, getListing } from '../api/apartments'
 import { DatasetRequired } from '../components/analysis/DatasetRequired'
 import { ApartmentHistoryChart } from '../components/research/ApartmentHistoryChart'
@@ -20,9 +20,12 @@ export function ApartmentDetailPage() {
   const { complexId } = useParams()
   const analysis = useAnalysis()
   const demo = useDemoAnalysis()
+  const selectedSourceId = analysis.selectedApartment?.complexId === complexId
+    ? analysis.selectedApartment.sourceId
+    : undefined
   const apartmentQuery = useQuery({
-    queryKey: apartmentKeys.detail(complexId ?? ''),
-    queryFn: () => getApartment(complexId as string),
+    queryKey: apartmentKeys.detail(complexId ?? '', undefined, selectedSourceId),
+    queryFn: () => getApartment(complexId as string, undefined, selectedSourceId),
     enabled: !analysis.isDemo && Boolean(complexId),
   })
   const demoApartment = demo.dataset?.apartments.find((item) => item.complexId === complexId)
@@ -45,11 +48,18 @@ export function ApartmentDetailPage() {
   }, [complexId, dates])
 
   const effectiveSelectedDate = selectedDate || dates.at(-1) || ''
-  const effectiveComparisonDate = comparisonDate || dates.at(-2) || ''
   const selectedIndex = dates.indexOf(effectiveSelectedDate)
+  const effectiveComparisonDate = comparisonDate || (selectedIndex > 0 ? dates[selectedIndex - 1] : '')
   const comparisonOptions = dates.slice(0, Math.max(selectedIndex, 0))
-  const selectedRunId = apartmentQuery.data?.history.find((point) => point.collectedAt === effectiveSelectedDate)?.runId
-  const comparisonRunId = apartmentQuery.data?.history.find((point) => point.collectedAt === effectiveComparisonDate)?.runId
+  const selectedRunPoint = apartmentQuery.data?.history.find((point) => point.collectedAt === effectiveSelectedDate)
+  const comparisonRunPoint = apartmentQuery.data?.history.find((point) => point.collectedAt === effectiveComparisonDate)
+  const selectedRunId = selectedRunPoint?.runId
+  const comparisonRunId = comparisonRunPoint?.runId
+  const selectedApartmentQuery = useQuery({
+    queryKey: apartmentKeys.detail(complexId ?? '', selectedRunId),
+    queryFn: () => getApartment(complexId as string, selectedRunId),
+    enabled: !analysis.isDemo && Boolean(complexId && selectedRunId),
+  })
   const selectedListingsQuery = useQuery({
     queryKey: apartmentKeys.listings(complexId ?? '', selectedRunId),
     queryFn: () => getApartmentListings(complexId as string, { runId: selectedRunId }),
@@ -60,49 +70,122 @@ export function ApartmentDetailPage() {
     queryFn: () => getApartmentListings(complexId as string, { runId: comparisonRunId }),
     enabled: !analysis.isDemo && Boolean(complexId && comparisonRunId),
   })
+  const selectedListingRecords = useMemo(
+    () => [
+      ...(selectedListingsQuery.data?.items ?? []).map((listing) => ({
+        groupId: listing.groupId,
+        summary: listing,
+        absence: undefined,
+      })),
+      ...(selectedListingsQuery.data?.absentItems ?? []).map((absence) => ({
+        groupId: absence.groupId,
+        summary: undefined,
+        absence,
+      })),
+    ],
+    [selectedListingsQuery.data?.absentItems, selectedListingsQuery.data?.items],
+  )
+  const comparisonListingRecords = useMemo(
+    () => [
+      ...(comparisonListingsQuery.data?.items ?? []).map((listing) => ({
+        groupId: listing.groupId,
+        summary: listing,
+        absence: undefined,
+      })),
+      ...(comparisonListingsQuery.data?.absentItems ?? []).map((absence) => ({
+        groupId: absence.groupId,
+        summary: undefined,
+        absence,
+      })),
+    ],
+    [comparisonListingsQuery.data?.absentItems, comparisonListingsQuery.data?.items],
+  )
   const selectedDetailQueries = useQueries({
-    queries: (selectedListingsQuery.data?.items ?? []).map((listing) => ({
-      queryKey: apartmentKeys.listing(listing.groupId, selectedRunId),
-      queryFn: () => getListing(listing.groupId, selectedRunId),
+    queries: selectedListingRecords.map((record) => ({
+      queryKey: apartmentKeys.listing(record.groupId, selectedRunId),
+      queryFn: () => getListing(record.groupId, selectedRunId),
       enabled: !analysis.isDemo,
     })),
   })
   const comparisonDetailQueries = useQueries({
-    queries: (comparisonListingsQuery.data?.items ?? []).map((listing) => ({
-      queryKey: apartmentKeys.listing(listing.groupId, comparisonRunId),
-      queryFn: () => getListing(listing.groupId, comparisonRunId),
+    queries: comparisonListingRecords.map((record) => ({
+      queryKey: apartmentKeys.listing(record.groupId, comparisonRunId),
+      queryFn: () => getListing(record.groupId, comparisonRunId),
       enabled: !analysis.isDemo,
     })),
   })
   const selectedApiSnapshot = useMemo<ListingGroup[]>(
-    () => (selectedListingsQuery.data?.items ?? []).map((listing, index) => {
+    () => selectedListingRecords.flatMap((record, index) => {
+      if (!record.summary) return []
       const detail = selectedDetailQueries[index]?.data
-      return detail ? adaptListingDetail(detail) : adaptListing(listing)
+      return [detail ? adaptListingDetail(detail) : adaptListing(record.summary)]
     }),
-    [selectedDetailQueries, selectedListingsQuery.data?.items],
+    [selectedDetailQueries, selectedListingRecords],
+  )
+  const selectedApiAbsences = useMemo<ListingGroup[]>(
+    () => selectedListingRecords.flatMap((record, index) => {
+      if (!record.absence) return []
+      const detail = selectedDetailQueries[index]?.data
+      if (!detail) return [adaptListingAbsence(record.absence, selectedRunId)]
+      return [{
+        ...adaptListingDetail(detail),
+        status: record.absence.status,
+        absenceDetectedAt: record.absence.detectedAt,
+        removedAt: record.absence.removedAt ?? undefined,
+      }]
+    }),
+    [selectedDetailQueries, selectedListingRecords],
   )
   const comparisonApiSnapshot = useMemo<ListingGroup[]>(
-    () => (comparisonListingsQuery.data?.items ?? []).map((listing, index) => {
+    () => comparisonListingRecords.flatMap((record, index) => {
+      if (!record.summary) return []
       const detail = comparisonDetailQueries[index]?.data
-      return detail ? adaptListingDetail(detail) : adaptListing(listing)
+      return [detail ? adaptListingDetail(detail) : adaptListing(record.summary)]
     }),
-    [comparisonDetailQueries, comparisonListingsQuery.data?.items],
+    [comparisonDetailQueries, comparisonListingRecords],
+  )
+  const comparisonApiAbsences = useMemo<ListingGroup[]>(
+    () => comparisonListingRecords.flatMap((record, index) => {
+      if (!record.absence) return []
+      const detail = comparisonDetailQueries[index]?.data
+      if (!detail) return [adaptListingAbsence(record.absence, comparisonRunId)]
+      return [{
+        ...adaptListingDetail(detail),
+        status: record.absence.status,
+        absenceDetectedAt: record.absence.detectedAt,
+        removedAt: record.absence.removedAt ?? undefined,
+      }]
+    }),
+    [comparisonDetailQueries, comparisonListingRecords],
   )
   const selectedSnapshot = analysis.isDemo && apartmentBase
     ? getListingsAt(apartmentBase, effectiveSelectedDate)
     : selectedApiSnapshot
+  const selectedAbsentSnapshot = analysis.isDemo ? [] : selectedApiAbsences
   const comparisonSnapshot = analysis.isDemo && apartmentBase
     ? getListingsAt(apartmentBase, effectiveComparisonDate)
     : comparisonApiSnapshot
+  const comparisonAbsentSnapshot = analysis.isDemo ? [] : comparisonApiAbsences
+  const selectedComparisonSnapshot = [...selectedSnapshot, ...selectedAbsentSnapshot]
+  const comparisonCombinedSnapshot = [...comparisonSnapshot, ...comparisonAbsentSnapshot]
   const apartment = useMemo(
-    () => analysis.isDemo ? apartmentBase : (apartmentQuery.data ? adaptApartmentDetail(apartmentQuery.data, selectedSnapshot) : undefined),
-    [analysis.isDemo, apartmentBase, apartmentQuery.data, selectedSnapshot],
+    () => {
+      if (analysis.isDemo) return apartmentBase
+      const apartmentAtSelectedRun = selectedApartmentQuery.data ?? apartmentQuery.data
+      return apartmentAtSelectedRun
+        ? adaptApartmentDetail(apartmentAtSelectedRun, selectedSnapshot)
+        : undefined
+    },
+    [analysis.isDemo, apartmentBase, apartmentQuery.data, selectedApartmentQuery.data, selectedSnapshot],
   )
   const visibleListings = selectedSnapshot.filter((listing) => tradeFilter === 'all' || listing.tradeType === tradeFilter)
+  const visibleAbsentListings = selectedAbsentSnapshot.filter((listing) => tradeFilter === 'all' || listing.tradeType === tradeFilter)
+  const comparisonDetailsLoading = [...selectedDetailQueries, ...comparisonDetailQueries].some((query) => query.isPending)
+  const comparisonDetailsError = [...selectedDetailQueries, ...comparisonDetailQueries].some((query) => query.isError)
 
   if (analysis.isDemo && !demo.dataset) return <DatasetRequired />
-  if (!analysis.isDemo && (apartmentQuery.isLoading || (selectedRunId && selectedListingsQuery.isLoading))) return <DatasetRequired isLoading />
-  const queryError = apartmentQuery.error ?? selectedListingsQuery.error
+  if (!analysis.isDemo && (apartmentQuery.isLoading || (selectedRunId && (selectedApartmentQuery.isLoading || selectedListingsQuery.isLoading)) || (comparisonRunId && comparisonListingsQuery.isLoading))) return <DatasetRequired isLoading />
+  const queryError = apartmentQuery.error ?? selectedApartmentQuery.error ?? selectedListingsQuery.error ?? comparisonListingsQuery.error
   if (!analysis.isDemo && queryError) return <DatasetRequired error={queryError instanceof Error ? queryError.message : '아파트 상세를 불러오지 못했습니다.'} />
   if (!apartment) return <div className="rounded-2xl border border-slate-200 bg-white p-10 text-center"><h1 className="text-xl font-black">아파트를 찾을 수 없습니다</h1><Link to="/apartments" className="mt-4 inline-flex text-sm font-bold text-emerald-700">목록으로 돌아가기</Link></div>
 
@@ -118,6 +201,19 @@ export function ApartmentDetailPage() {
     const averageMonthlyRent = listings.length ? listings.reduce((sum, listing) => sum + (listing.monthlyRent ?? 0), 0) / listings.length : 0
     return { count: listings.length, averagePrice, averageMonthlyRent }
   }
+  const completeApartmentDetails = [
+    ['세대수', apartment.details.householdCount > 0 ? `${apartment.details.householdCount.toLocaleString('ko-KR')}세대` : '-'],
+    ['동 수', apartment.details.buildingCount > 0 ? `${apartment.details.buildingCount.toLocaleString('ko-KR')}개동` : '-'],
+    ['사용승인일', apartment.details.approvalDate ?? (apartment.details.completedYear > 0 ? `${apartment.details.completedYear}년` : '-')],
+    ['총 주차대수', apartment.details.parkingCount ? `${apartment.details.parkingCount.toLocaleString('ko-KR')}대` : '-'],
+    ['세대당 주차', apartment.details.parkingPerHousehold > 0 ? `${apartment.details.parkingPerHousehold}대` : '-'],
+    ['난방방식', apartment.details.heating || '-'],
+    ['현관구조', apartment.details.entranceType || '-'],
+    ['용적률', apartment.details.floorAreaRatio ? `${apartment.details.floorAreaRatio}%` : '-'],
+    ['건폐율', apartment.details.buildingCoverageRatio ? `${apartment.details.buildingCoverageRatio}%` : '-'],
+    ['관리사무소 전화', apartment.details.managementOfficePhone || '-'],
+    ['시공사', apartment.details.builders?.length ? apartment.details.builders.join(', ') : '-'],
+  ]
 
   return (
     <div className="space-y-6">
@@ -130,11 +226,27 @@ export function ApartmentDetailPage() {
       </div>
 
       <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5" aria-label="단지 기본 정보">
-        {[[Home, '세대수', apartment.details.householdCount > 0 ? `${apartment.details.householdCount.toLocaleString('ko-KR')}세대` : '-'], [Building2, '동 수', apartment.details.buildingCount > 0 ? `${apartment.details.buildingCount}개동` : '-'], [CalendarDays, '준공', apartment.details.completedYear > 0 ? `${apartment.details.completedYear}년` : '-'], [Car, '세대당 주차', apartment.details.parkingPerHousehold > 0 ? `${apartment.details.parkingPerHousehold}대` : '-'], [Flame, '난방', apartment.details.heating || '-']].map(([Icon, label, value]) => {
+        {[[Home, '세대수', apartment.details.householdCount > 0 ? `${apartment.details.householdCount.toLocaleString('ko-KR')}세대` : '-'], [Building2, '동 수', apartment.details.buildingCount > 0 ? `${apartment.details.buildingCount}개동` : '-'], [CalendarDays, '사용승인', apartment.details.approvalDate ?? (apartment.details.completedYear > 0 ? `${apartment.details.completedYear}년` : '-')], [Car, '주차', apartment.details.parkingCount ? `${apartment.details.parkingCount.toLocaleString('ko-KR')}대${apartment.details.parkingPerHousehold > 0 ? ` · 세대당 ${apartment.details.parkingPerHousehold}대` : ''}` : apartment.details.parkingPerHousehold > 0 ? `세대당 ${apartment.details.parkingPerHousehold}대` : '-'], [Flame, '난방', apartment.details.heating || '-']].map(([Icon, label, value]) => {
           const DetailIcon = Icon as typeof Home
           return <article key={String(label)} className="rounded-2xl border border-slate-200 bg-white p-4"><p className="flex items-center gap-2 text-xs font-bold text-slate-400"><DetailIcon size={15} /> {String(label)}</p><p className="mt-2 font-black text-slate-900">{String(value)}</p></article>
         })}
       </section>
+
+      <details className="group rounded-2xl border border-slate-200 bg-white">
+        <summary className="flex cursor-pointer list-none items-center justify-between gap-4 px-5 py-4 text-sm font-extrabold text-slate-800">
+          단지 기본정보 전체 보기
+          <span className="text-xs font-bold text-slate-400 group-open:hidden">펼치기</span>
+          <span className="hidden text-xs font-bold text-slate-400 group-open:inline">접기</span>
+        </summary>
+        <dl className="grid border-t border-slate-100 sm:grid-cols-2 lg:grid-cols-3">
+          {completeApartmentDetails.map(([label, value]) => (
+            <div key={label} className="border-b border-slate-100 px-5 py-4 last:border-b-0 sm:[&:nth-last-child(-n+2)]:border-b-0 lg:[&:nth-last-child(-n+3)]:border-b-0">
+              <dt className="text-xs font-bold text-slate-400">{label}</dt>
+              <dd className="mt-1.5 break-words text-sm font-extrabold text-slate-900">{value}</dd>
+            </div>
+          ))}
+        </dl>
+      </details>
 
       <section className="grid gap-3 lg:grid-cols-3" aria-label="선택 날짜 거래 유형별 현황">
         {(['sale', 'jeonse', 'monthly'] as TradeType[]).map((type) => {
@@ -158,7 +270,9 @@ export function ApartmentDetailPage() {
             </div>
           </div>
         </div>
-        {effectiveComparisonDate ? <ListingComparisonBoard apartment={apartment} beforeDate={effectiveComparisonDate} afterDate={effectiveSelectedDate} beforeListings={comparisonSnapshot} afterListings={selectedSnapshot} /> : <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-10 text-center text-sm font-semibold text-slate-400">이 날짜보다 이전 조사 기록이 없어 비교할 수 없습니다.</div>}
+        {!analysis.isDemo && comparisonDetailsLoading ? <div className="rounded-2xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm font-bold text-sky-700">중개사별 추가 상세정보를 불러오는 중입니다. 기본 매물 정보부터 먼저 표시합니다.</div> : null}
+        {!analysis.isDemo && comparisonDetailsError ? <div role="alert" className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-bold text-amber-800">일부 중개사 상세정보를 불러오지 못해 해당 항목은 비교에서 제외했습니다.</div> : null}
+        {effectiveComparisonDate ? <ListingComparisonBoard apartment={apartment} beforeDate={effectiveComparisonDate} afterDate={effectiveSelectedDate} beforeListings={comparisonCombinedSnapshot} afterListings={selectedComparisonSnapshot} beforeRunStatus={comparisonRunPoint?.status} /> : <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-10 text-center text-sm font-semibold text-slate-400">이 날짜보다 이전 조사 기록이 없어 비교할 수 없습니다.</div>}
       </section>
 
       <section className="space-y-4" aria-labelledby="snapshot-list-heading">
@@ -179,6 +293,21 @@ export function ApartmentDetailPage() {
         </div>
         {visibleListings.length ? <SnapshotListingCards apartment={apartment} listings={visibleListings} viewMode={listingViewMode} /> : <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-10 text-center text-sm font-semibold text-slate-400">선택한 거래 유형의 매물이 없습니다.</div>}
       </section>
+
+      {selectedAbsentSnapshot.length ? (
+        <section className="space-y-4" aria-labelledby="snapshot-absence-heading">
+          <div>
+            <p className="text-sm font-extrabold text-sky-700">{formatCollectedAt(effectiveSelectedDate)}</p>
+            <h2 id="snapshot-absence-heading" className="mt-1 text-xl font-black text-slate-950">일시 미노출·삭제 {selectedAbsentSnapshot.length}건</h2>
+            <p className="mt-1 text-sm text-slate-500">일시 미노출은 1회 미관측 상태이며, 삭제는 연속된 완료 조사에서 미관측되어 확정된 상태입니다.</p>
+          </div>
+          {visibleAbsentListings.length ? (
+            <SnapshotListingCards apartment={apartment} listings={visibleAbsentListings} viewMode={listingViewMode} />
+          ) : (
+            <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-10 text-center text-sm font-semibold text-slate-400">선택한 거래 유형의 미노출·삭제 매물이 없습니다.</div>
+          )}
+        </section>
+      ) : null}
     </div>
   )
 }

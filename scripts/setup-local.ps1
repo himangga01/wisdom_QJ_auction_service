@@ -49,19 +49,25 @@ Invoke-CheckedCommand `
     -WorkingDirectory $RepositoryRoot `
     -FailureMessage '백엔드 패키지 설치에 실패했습니다.'
 
-Write-Host 'Playwright Chromium을 설치합니다.'
-Invoke-CheckedCommand `
-    -Executable $VenvPython `
-    -Arguments @('-m', 'playwright', 'install', 'chromium') `
-    -WorkingDirectory $BackendRoot `
-    -FailureMessage 'Playwright Chromium 설치에 실패했습니다.'
+$nodeCommand = Get-Command node.exe -ErrorAction SilentlyContinue
+if ($null -eq $nodeCommand) {
+    $nodeCommand = Get-Command node -ErrorAction SilentlyContinue
+}
+if ($null -eq $nodeCommand) {
+    throw 'Node.js 22 LTS가 필요합니다. Node.js를 설치한 뒤 다시 실행하세요.'
+}
+
+$nodeVersion = (& $nodeCommand.Source --version).Trim()
+if ($LASTEXITCODE -ne 0 -or $nodeVersion -notmatch '^v22\.') {
+    throw "지원하는 Node.js 버전은 22 LTS입니다. 현재 버전: $nodeVersion"
+}
 
 $npmCommand = Get-Command npm.cmd -ErrorAction SilentlyContinue
 if ($null -eq $npmCommand) {
     $npmCommand = Get-Command npm -ErrorAction SilentlyContinue
 }
 if ($null -eq $npmCommand) {
-    throw 'Node.js와 npm이 필요합니다. Node.js 22 LTS 설치 후 다시 실행하세요.'
+    throw 'npm을 찾을 수 없습니다. Node.js 22 LTS를 다시 설치한 뒤 실행하세요.'
 }
 
 Write-Host '프런트엔드 패키지를 설치합니다.'

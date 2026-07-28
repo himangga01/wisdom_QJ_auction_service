@@ -9,11 +9,17 @@ class ComparableListing:
     price: int | None
     deposit: int | None
     monthly_rent: int | None
-    management_fee: str
-    move_in_date: str
+    building: str | None
     floor: str | None
     direction: str | None
+    supply_area_m2: float | None
+    exclusive_area_m2: float | None
+    management_fee: str
+    move_in_date: str
+    room_bathroom: str
+    loan: str
     option_tags: tuple[str, ...]
+    registration_count: int
     article_ids: frozenset[str]
 
 
@@ -36,11 +42,17 @@ _FIELDS = (
     ("price", "price"),
     ("deposit", "deposit"),
     ("monthly_rent", "monthlyRent"),
-    ("management_fee", "managementFee"),
-    ("move_in_date", "moveInDate"),
+    ("building", "building"),
     ("floor", "floor"),
     ("direction", "direction"),
+    ("supply_area_m2", "supplyAreaM2"),
+    ("exclusive_area_m2", "exclusiveAreaM2"),
+    ("management_fee", "managementFee"),
+    ("move_in_date", "moveInDate"),
+    ("room_bathroom", "roomBathroom"),
+    ("loan", "loan"),
     ("option_tags", "optionTags"),
+    ("registration_count", "registrationCount"),
     ("article_ids", "articleIds"),
 )
 
@@ -48,14 +60,25 @@ _DETAIL_FIELDS = frozenset(
     {
         "management_fee",
         "move_in_date",
+        "room_bathroom",
+        "loan",
         "option_tags",
     }
 )
 
 
 def _json_value(value: object) -> object:
+    if isinstance(value, str):
+        normalized = " ".join(value.split())
+        return normalized or None
     if isinstance(value, (tuple, frozenset)):
-        return sorted(value)
+        return sorted(
+            {
+                normalized
+                for item in value
+                if (normalized := " ".join(str(item).split()))
+            }
+        )
     return value
 
 

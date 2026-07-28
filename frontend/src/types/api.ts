@@ -17,7 +17,7 @@ export type AnalysisRunStage =
   | 'save'
 
 export type TradeTypeApi = 'sale' | 'jeonse' | 'monthly'
-export type ListingStatusApi = 'active' | 'new' | 'changed' | 'removed'
+export type ListingStatusApi = 'active' | 'new' | 'changed' | 'missing' | 'removed'
 export type ScheduleCadence = 'daily' | 'weekdays' | 'weekly'
 export type InteractionDelayPresetApi =
   | 'very_fast'
@@ -131,8 +131,17 @@ export interface ListingSummaryApi {
   status: string
   discoveredAt: string
   lastSeenAt: string
+  removedAt: string | null
   capturedAt: string
   aggregate: ListingAggregateApi
+}
+
+export interface ListingAbsenceApi {
+  groupId: string
+  status: 'missing' | 'removed'
+  lastSnapshot: ListingSummaryApi
+  detectedAt: string
+  removedAt: string | null
 }
 
 export interface ListingPageApi {
@@ -140,6 +149,7 @@ export interface ListingPageApi {
   runId: string
   collectedAt: string
   items: ListingSummaryApi[]
+  absentItems: ListingAbsenceApi[]
 }
 
 export interface RealtorApi {
@@ -199,6 +209,7 @@ export interface ListingDetailApi extends ListingSummaryApi {
   apartmentId: string
   complexId: string
   complexName: string
+  absenceDetectedAt: string | null
   registrations: BrokerRegistrationApi[]
   marketDetails: MarketDetailsApi | null
 }
@@ -208,9 +219,9 @@ export interface DashboardResponseApi {
   sourceUrl: string
   runId: string
   collectedAt: string
+  apartmentCount: number
   apartment: ApartmentDetailApi
   listings: ListingSummaryApi[]
-  recentApartments: ApartmentSummaryApi[]
 }
 
 export interface ScheduleApi {

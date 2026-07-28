@@ -13,6 +13,8 @@ Python 3.12~3.14, Node.js 22 LTS, Google Chrome을 설치한 뒤 PowerShell에�
 .\scripts\start.ps1 -Mode local
 ```
 
+`setup-local.ps1`은 Python 3.12~3.14와 Node.js 22를 확인하고 의존성을 설치한다. 수집 브라우저는 설치된 Google Chrome을 사용하므로 별도 Playwright Chromium 바이너리는 설치하지 않는다.
+
 로컬 모드는 `backend/data/wisdom_local.db` SQLite 파일과 단일 백그라운드 작업 실행기를 사용한다. 시작할 때 일반 Chrome을 전용 프로필과 loopback CDP 포트 `42973`으로 자동 실행한다. 사용자 기본 Chrome 프로필은 읽지 않는다. 상태 확인과 종료 명령은 다음과 같다.
 
 ```powershell
@@ -22,6 +24,17 @@ Python 3.12~3.14, Node.js 22 LTS, Google Chrome을 설치한 뒤 PowerShell에�
 
 자세한 내용: [로컬 실행 가이드](docs/setup/local-setup.md)
 
+### Windows 수동 로컬 실행
+
+통합 스크립트 대신 API와 포탈을 각각 실행하려면 로컬 환경파일을 준비하고 전용 Chrome, migration, Uvicorn, Vite를 순서대로 실행한다.
+
+```powershell
+Copy-Item .\backend\.env.local.example .\backend\.env
+.\scripts\start-naver-browser.ps1
+```
+
+전체 명령과 종료 방법은 [로컬 실행 가이드](docs/setup/local-setup.md)의 `수동 로컬 실행`을 따른다. Docker 모드로 전환할 때는 `backend/.env.example`을 다시 복사해 `APP_RUNTIME`과 데이터베이스 URL을 함께 변경한다.
+
 ### Docker 실행
 
 Docker Desktop과 WSL 2를 준비하고 환경파일을 만든 뒤 실행한다.
@@ -30,6 +43,8 @@ Docker Desktop과 WSL 2를 준비하고 환경파일을 만든 뒤 실행한다.
 Copy-Item .\backend\.env.example .\backend\.env
 .\scripts\start.ps1 -Mode docker
 ```
+
+전체 서비스의 공식 구성은 저장소 루트의 `docker-compose.production.yml`이다. 시작 스크립트는 `backend/.env`를 Compose 변수 치환과 컨테이너 환경변수에 함께 사용한다.
 
 자세한 내용: [Docker 설치·실행 가이드](docs/setup/docker-setup.md)
 
@@ -73,6 +88,9 @@ This repository supports two explicit runtime modes while preserving the same fr
 - Docker retains the Playwright-owned browser fallback. No stealth, fingerprint alteration, CAPTCHA solver, proxy rotation, or direct Naver data API is used.
 - Host ports are fixed to frontend `42880` and API `42881`. Docker-internal ports remain `80` and `8000`.
 - Use `scripts/setup-local.ps1` once, then `scripts/start.ps1 -Mode local`; use `scripts/stop-local.ps1` only for local processes.
+- For manual local startup, copy `backend/.env.local.example` to `backend/.env`, start the dedicated Chrome, then run Alembic, Uvicorn, and Vite separately.
+- Local setup validates Node.js 22 and uses the installed Google Chrome without installing a Playwright-owned Chromium binary.
+- The canonical full-service Docker file is `docker-compose.production.yml`; `start.ps1` passes `backend/.env` through Compose `--env-file`.
 - Docker setup never installs Docker automatically and never deletes volumes.
 
 ## Naver Collection Contract

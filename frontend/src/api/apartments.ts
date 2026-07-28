@@ -13,8 +13,8 @@ import { apiRequest } from './client'
 export const apartmentKeys = {
   all: ['apartments'] as const,
   page: (query: string, page: number, pageSize: number) => ['apartments', 'page', query, page, pageSize] as const,
-  detail: (complexId: string) => ['apartments', 'detail', complexId] as const,
-  history: (complexId: string) => ['apartments', 'history', complexId] as const,
+  detail: (complexId: string, runId?: string, sourceId?: string) => ['apartments', 'detail', complexId, runId ?? 'latest', sourceId ?? 'any-source'] as const,
+  history: (complexId: string, sourceId?: string) => ['apartments', 'history', complexId, sourceId ?? 'latest-source'] as const,
   listings: (complexId: string, runId?: string) => ['apartments', 'listings', complexId, runId ?? 'latest'] as const,
   listing: (groupId: string, runId?: string) => ['listings', groupId, runId ?? 'latest'] as const,
   dashboard: (sourceId?: string) => ['dashboard', sourceId ?? 'latest'] as const,
@@ -23,7 +23,7 @@ export const apartmentKeys = {
 export function getApartments({
   query = '',
   page = 1,
-  pageSize = 100,
+  pageSize = 20,
 }: {
   query?: string
   page?: number
@@ -32,12 +32,12 @@ export function getApartments({
   return apiRequest('/apartments', {}, { query, page, pageSize })
 }
 
-export function getApartment(complexId: string): Promise<ApartmentDetailApi> {
-  return apiRequest(`/apartments/${encodeURIComponent(complexId)}`)
+export function getApartment(complexId: string, runId?: string, sourceId?: string): Promise<ApartmentDetailApi> {
+  return apiRequest(`/apartments/${encodeURIComponent(complexId)}`, {}, { runId, sourceId })
 }
 
-export function getApartmentHistory(complexId: string): Promise<ApartmentHistoryPointApi[]> {
-  return apiRequest(`/apartments/${encodeURIComponent(complexId)}/history`)
+export function getApartmentHistory(complexId: string, sourceId?: string): Promise<ApartmentHistoryPointApi[]> {
+  return apiRequest(`/apartments/${encodeURIComponent(complexId)}/history`, {}, { sourceId })
 }
 
 export function getApartmentListings(

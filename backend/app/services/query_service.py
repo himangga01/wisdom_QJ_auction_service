@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any
+from urllib.parse import urljoin
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
@@ -34,6 +36,7 @@ from app.schemas.dashboard import DashboardResponse
 from app.schemas.listing import (
     BrokerRegistration,
     ListingAggregate,
+    ListingAbsence,
     ListingDetail,
     ListingPage,
     ListingSummary,
@@ -46,6 +49,23 @@ SEOUL = ZoneInfo("Asia/Seoul")
 
 class QueryNotFoundError(LookupError):
     code = "dataset_not_found"
+
+
+ListingRow = tuple[
+    ListingSnapshot,
+    ListingGroup,
+    ListingAggregateModel | None,
+    int | None,
+    datetime,
+]
+
+
+@dataclass(frozen=True, slots=True)
+class _AbsenceRecord:
+    status: str
+    detected_at: datetime
+    removed_at: datetime | None
+    row: ListingRow
 
 
 def seoul_iso(value: datetime) -> str:
@@ -172,12 +192,21 @@ class QueryService:
         listing_count: int,
     ) -> ApartmentSummary:
         apartment, snapshot, run, source = row
-        details = snapshot.details_json.get("details", snapshot.details_json)
+        captured = snapshot.details_json
+        details = captured.get("details", captured)
         return ApartmentSummary(
             apartment_id=apartment.id,
             complex_id=apartment.naver_complex_id,
-            complex_name=apartment.name,
-            address=apartment.address,
+            complex_name=str(
+                (captured.get("name") or "")
+                if "name" in captured
+                else apartment.name
+            ),
+            address=str(
+                (captured.get("address") or "")
+                if "address" in captured
+                else ""
+            ),
             source_id=source.id,
             source_url=source.normalized_url,
             latest_run_id=run.id,
@@ -224,18 +253,24 @@ class QueryService:
             total=total,
         )
 
-    async def history(self, complex_id: str) -> list[ApartmentHistoryPoint]:
+    async def history(
+        self, complex_id: str, *, source_id: UUID | None = None
+    ) -> list[ApartmentHistoryPoint]:
         apartment = await self.session.scalar(
             select(Apartment).where(Apartment.naver_complex_id == complex_id)
         )
         if apartment is None:
             raise QueryNotFoundError("아파트를 찾을 수 없습니다.")
+        if source_id is None:
+            _, _, _, source = await self._latest_result(complex_id=complex_id)
+            source_id = source.id
         run_rows = (
             await self.session.execute(
                 select(CrawlRun.id, CrawlRun.status, ApartmentSnapshot.captured_at)
                 .join(ApartmentSnapshot, ApartmentSnapshot.run_id == CrawlRun.id)
                 .where(
                     ApartmentSnapshot.apartment_id == apartment.id,
+                    CrawlRun.source_id == source_id,
                     CrawlRun.status.in_(RESULT_STATUSES),
                 )
                 .order_by(ApartmentSnapshot.captured_at.asc())
@@ -290,10 +325,18 @@ class QueryService:
         ]
 
     async def apartment(
-        self, complex_id: str, *, run_id: UUID | None = None
+        self,
+        complex_id: str,
+        *,
+        run_id: UUID | None = None,
+        source_id: UUID | None = None,
     ) -> ApartmentDetail:
-        row = await self._latest_result(complex_id=complex_id, run_id=run_id)
-        history = await self.history(complex_id)
+        row = await self._latest_result(
+            complex_id=complex_id,
+            run_id=run_id,
+            source_id=source_id,
+        )
+        history = await self.history(complex_id, source_id=row[3].id)
         listing_count = (await self._listing_counts([row[2].id])).get(row[2].id, 0)
         summary = self._apartment_summary(row, listing_count)
         return ApartmentDetail(
@@ -309,9 +352,95 @@ class QueryService:
             history=history,
         )
 
-    async def _as_of_listing_rows(
-        self, *, apartment_id: UUID, captured_at: datetime
-    ) -> list[tuple[ListingSnapshot, ListingGroup, ListingAggregateModel | None, int | None]]:
+    async def _source_run_ids_through(self, selected_run: CrawlRun) -> list[UUID]:
+        ordered_run_ids = list(
+            (
+                await self.session.scalars(
+                    select(CrawlRun.id)
+                    .where(
+                        CrawlRun.source_id == selected_run.source_id,
+                        CrawlRun.status.in_(RESULT_STATUSES),
+                    )
+                    .order_by(CrawlRun.created_at.asc(), CrawlRun.id.asc())
+                )
+            ).all()
+        )
+        run_ids: list[UUID] = []
+        for item_run_id in ordered_run_ids:
+            run_ids.append(item_run_id)
+            if item_run_id == selected_run.id:
+                break
+        if selected_run.id not in run_ids:
+            run_ids = [selected_run.id]
+        return run_ids
+
+    async def _listing_rows_for_run(
+        self, *, apartment_id: UUID, selected_run: CrawlRun
+    ) -> list[ListingRow]:
+        previous = aliased(ListingSnapshot)
+        previous_run = aliased(CrawlRun)
+        first_seen = aliased(ListingSnapshot)
+        first_seen_run = aliased(CrawlRun)
+        previous_price = (
+            select(previous.price)
+            .join(previous_run, previous_run.id == previous.run_id)
+            .where(
+                previous.listing_group_id == ListingSnapshot.listing_group_id,
+                previous_run.source_id == selected_run.source_id,
+                previous_run.status.in_(RESULT_STATUSES),
+                previous.captured_at < ListingSnapshot.captured_at,
+            )
+            .order_by(previous.captured_at.desc())
+            .limit(1)
+            .correlate(ListingSnapshot)
+            .scalar_subquery()
+        )
+        discovered_at = (
+            select(func.min(first_seen.captured_at))
+            .join(first_seen_run, first_seen_run.id == first_seen.run_id)
+            .where(
+                first_seen.listing_group_id == ListingSnapshot.listing_group_id,
+                first_seen_run.source_id == selected_run.source_id,
+                first_seen_run.status.in_(RESULT_STATUSES),
+                first_seen.captured_at <= ListingSnapshot.captured_at,
+            )
+            .correlate(ListingSnapshot)
+            .scalar_subquery()
+        )
+        statement = (
+            select(
+                ListingSnapshot,
+                ListingGroup,
+                ListingAggregateModel,
+                previous_price.label("previous_price"),
+                discovered_at.label("discovered_at"),
+            )
+            .join(ListingGroup, ListingGroup.id == ListingSnapshot.listing_group_id)
+            .outerjoin(
+                ListingAggregateModel,
+                ListingAggregateModel.listing_snapshot_id == ListingSnapshot.id,
+            )
+            .where(
+                ListingSnapshot.run_id == selected_run.id,
+                ListingGroup.apartment_id == apartment_id,
+            )
+            .order_by(
+                ListingSnapshot.trade_type.asc(),
+                ListingSnapshot.price.asc().nullslast(),
+                ListingSnapshot.building.asc().nullslast(),
+            )
+        )
+        return list((await self.session.execute(statement)).all())
+
+    async def _last_listing_rows_for_groups(
+        self,
+        *,
+        apartment_id: UUID,
+        run_ids: list[UUID],
+        group_ids: set[UUID],
+    ) -> list[ListingRow]:
+        if not run_ids or not group_ids:
+            return []
         ranked = (
             select(
                 ListingSnapshot.id.label("snapshot_id"),
@@ -322,24 +451,35 @@ class QueryService:
                 )
                 .label("snapshot_rank"),
             )
-            .join(CrawlRun, CrawlRun.id == ListingSnapshot.run_id)
             .join(ListingGroup, ListingGroup.id == ListingSnapshot.listing_group_id)
             .where(
+                ListingSnapshot.run_id.in_(run_ids),
+                ListingSnapshot.listing_group_id.in_(group_ids),
                 ListingGroup.apartment_id == apartment_id,
-                ListingSnapshot.captured_at <= captured_at,
-                CrawlRun.status.in_(RESULT_STATUSES),
             )
             .subquery()
         )
         previous = aliased(ListingSnapshot)
+        first_seen = aliased(ListingSnapshot)
         previous_price = (
             select(previous.price)
             .where(
                 previous.listing_group_id == ListingSnapshot.listing_group_id,
+                previous.run_id.in_(run_ids),
                 previous.captured_at < ListingSnapshot.captured_at,
             )
             .order_by(previous.captured_at.desc())
             .limit(1)
+            .correlate(ListingSnapshot)
+            .scalar_subquery()
+        )
+        discovered_at = (
+            select(func.min(first_seen.captured_at))
+            .where(
+                first_seen.listing_group_id == ListingSnapshot.listing_group_id,
+                first_seen.run_id.in_(run_ids),
+                first_seen.captured_at <= ListingSnapshot.captured_at,
+            )
             .correlate(ListingSnapshot)
             .scalar_subquery()
         )
@@ -349,6 +489,7 @@ class QueryService:
                 ListingGroup,
                 ListingAggregateModel,
                 previous_price.label("previous_price"),
+                discovered_at.label("discovered_at"),
             )
             .select_from(ranked)
             .join(ListingSnapshot, ListingSnapshot.id == ranked.c.snapshot_id)
@@ -365,6 +506,70 @@ class QueryService:
             )
         )
         return list((await self.session.execute(statement)).all())
+
+    async def _absence_states_as_of_run(
+        self, *, apartment_id: UUID, selected_run: CrawlRun
+    ) -> list[_AbsenceRecord]:
+        run_ids = await self._source_run_ids_through(selected_run)
+        event_rows = (
+            await self.session.execute(
+                select(
+                    ChangeEvent.listing_group_id,
+                    ChangeEvent.event_type,
+                    ChangeEvent.detected_at,
+                )
+                .join(
+                    ListingGroup,
+                    ListingGroup.id == ChangeEvent.listing_group_id,
+                )
+                .where(
+                    ChangeEvent.run_id.in_(run_ids),
+                    ListingGroup.apartment_id == apartment_id,
+                )
+                .order_by(ChangeEvent.detected_at.asc(), ChangeEvent.id.asc())
+            )
+        ).all()
+        states: dict[UUID, tuple[str, datetime, datetime | None]] = {}
+        for group_id, event_type, detected_at in event_rows:
+            if event_type == "missing":
+                states[group_id] = ("missing", detected_at, None)
+            elif event_type == "removed":
+                states[group_id] = ("removed", detected_at, detected_at)
+            elif event_type in {"new", "changed", "restored"}:
+                states.pop(group_id, None)
+
+        actual_group_ids = set(
+            (
+                await self.session.scalars(
+                    select(ListingSnapshot.listing_group_id)
+                    .join(
+                        ListingGroup,
+                        ListingGroup.id == ListingSnapshot.listing_group_id,
+                    )
+                    .where(
+                        ListingSnapshot.run_id == selected_run.id,
+                        ListingGroup.apartment_id == apartment_id,
+                    )
+                )
+            ).all()
+        )
+        for group_id in actual_group_ids:
+            states.pop(group_id, None)
+        rows = await self._last_listing_rows_for_groups(
+            apartment_id=apartment_id,
+            run_ids=run_ids,
+            group_ids=set(states),
+        )
+        return [
+            _AbsenceRecord(
+                status=states[row[1].id][0],
+                detected_at=states[row[1].id][1],
+                removed_at=states[row[1].id][2],
+                row=row,
+            )
+            for row in rows
+            if row[1].id in states
+        ]
 
     async def _event_statuses(self, run_id: UUID) -> dict[UUID, str]:
         rows = (
@@ -393,15 +598,16 @@ class QueryService:
     @classmethod
     def _listing_summary(
         cls,
-        row: tuple[ListingSnapshot, ListingGroup, ListingAggregateModel | None, int | None],
+        row: ListingRow,
         *,
         selected_run_id: UUID,
         event_status: str | None,
+        removed_at: datetime | None = None,
     ) -> ListingSummary:
-        snapshot, group, aggregate, previous_price = row
+        snapshot, group, aggregate, previous_price, discovered_at = row
         if event_status == "restored":
             status = "active"
-        elif event_status in {"new", "changed", "removed"}:
+        elif event_status in {"new", "changed", "missing", "removed"}:
             status = event_status
         elif snapshot.run_id == selected_run_id and snapshot.status in {
             "new",
@@ -427,8 +633,9 @@ class QueryService:
                 float(snapshot.exclusive_area) if snapshot.exclusive_area is not None else None
             ),
             status=status,
-            discovered_at=seoul_iso(group.first_seen_at),
-            last_seen_at=seoul_iso(group.last_seen_at),
+            discovered_at=seoul_iso(discovered_at),
+            last_seen_at=seoul_iso(snapshot.captured_at),
+            removed_at=seoul_iso(removed_at) if removed_at else None,
             captured_at=seoul_iso(snapshot.captured_at),
             aggregate=cls._aggregate(aggregate),
         )
@@ -444,8 +651,8 @@ class QueryService:
         apartment, apartment_snapshot, run, _ = await self._latest_result(
             complex_id=complex_id, run_id=run_id
         )
-        rows = await self._as_of_listing_rows(
-            apartment_id=apartment.id, captured_at=apartment_snapshot.captured_at
+        rows = await self._listing_rows_for_run(
+            apartment_id=apartment.id, selected_run=run
         )
         event_statuses = await self._event_statuses(run.id)
         items = [
@@ -456,59 +663,118 @@ class QueryService:
             )
             for row in rows
         ]
+        absence_records = await self._absence_states_as_of_run(
+            apartment_id=apartment.id,
+            selected_run=run,
+        )
+        absent_items = [
+            ListingAbsence(
+                group_id=record.row[1].id,
+                status=record.status,
+                last_snapshot=self._listing_summary(
+                    record.row,
+                    selected_run_id=record.row[0].run_id,
+                    event_status=None,
+                ),
+                detected_at=seoul_iso(record.detected_at),
+                removed_at=(
+                    seoul_iso(record.removed_at) if record.removed_at else None
+                ),
+            )
+            for record in absence_records
+        ]
         if trade_type:
             items = [item for item in items if item.trade_type == trade_type]
+            absent_items = [
+                item
+                for item in absent_items
+                if item.last_snapshot.trade_type == trade_type
+            ]
         if status:
             items = [item for item in items if item.status == status]
+            absent_items = (
+                [item for item in absent_items if item.status == status]
+                if status in {"missing", "removed"}
+                else []
+            )
         return ListingPage(
             complex_id=apartment.naver_complex_id,
             run_id=run.id,
             collected_at=seoul_iso(apartment_snapshot.captured_at),
             items=items,
+            absent_items=absent_items,
         )
 
-    async def _broker_registrations(
-        self, *, group_id: UUID, captured_at: datetime
+    async def _broker_registrations_for_run(
+        self, *, group_id: UUID, run_id: UUID
     ) -> list[BrokerRegistration]:
-        ranked = (
-            select(
-                BrokerArticleSnapshot.id.label("snapshot_id"),
-                func.row_number()
-                .over(
-                    partition_by=BrokerArticleSnapshot.broker_article_id,
-                    order_by=BrokerArticleSnapshot.captured_at.desc(),
-                )
-                .label("snapshot_rank"),
-            )
-            .join(CrawlRun, CrawlRun.id == BrokerArticleSnapshot.run_id)
-            .join(
-                BrokerArticle,
-                BrokerArticle.id == BrokerArticleSnapshot.broker_article_id,
-            )
-            .where(
-                BrokerArticle.listing_group_id == group_id,
-                BrokerArticleSnapshot.captured_at <= captured_at,
-                CrawlRun.status.in_(RESULT_STATUSES),
-            )
-            .subquery()
-        )
+        selected_run = await self.session.get(CrawlRun, run_id)
+        if selected_run is None:
+            raise QueryNotFoundError("조사 회차를 찾을 수 없습니다.")
         rows = (
             await self.session.execute(
                 select(BrokerArticle, BrokerArticleSnapshot)
-                .select_from(ranked)
-                .join(BrokerArticleSnapshot, BrokerArticleSnapshot.id == ranked.c.snapshot_id)
+                .select_from(BrokerArticleSnapshot)
                 .join(
                     BrokerArticle,
                     BrokerArticle.id == BrokerArticleSnapshot.broker_article_id,
                 )
-                .where(ranked.c.snapshot_rank == 1)
+                .where(
+                    BrokerArticle.listing_group_id == group_id,
+                    BrokerArticleSnapshot.run_id == run_id,
+                )
                 .order_by(BrokerArticle.provider.asc(), BrokerArticle.naver_article_id.asc())
             )
         ).all()
+        article_ids = [article.id for article, _ in rows]
+        first_seen_by_article: dict[UUID, datetime] = {}
+        if article_ids:
+            first_seen_rows = (
+                await self.session.execute(
+                    select(
+                        BrokerArticleSnapshot.broker_article_id,
+                        func.min(BrokerArticleSnapshot.captured_at),
+                    )
+                    .join(
+                        CrawlRun,
+                        CrawlRun.id == BrokerArticleSnapshot.run_id,
+                    )
+                    .where(
+                        BrokerArticleSnapshot.broker_article_id.in_(article_ids),
+                        CrawlRun.source_id == selected_run.source_id,
+                        CrawlRun.status.in_(RESULT_STATUSES),
+                        CrawlRun.created_at <= selected_run.created_at,
+                    )
+                    .group_by(BrokerArticleSnapshot.broker_article_id)
+                )
+            ).all()
+            first_seen_by_article = {
+                article_id: first_seen_at
+                for article_id, first_seen_at in first_seen_rows
+            }
         result: list[BrokerRegistration] = []
         for article, snapshot in rows:
             details = snapshot.details_json
             detail_collected = details.get("detail_collected", True)
+            provider = (
+                str(details.get("provider") or "")
+                if "provider" in details
+                else article.provider
+            )
+            is_npay = (
+                bool(details.get("is_npay"))
+                if "is_npay" in details
+                else article.is_npay
+            )
+            snapshot_article_url = (
+                details.get("article_url")
+                if "article_url" in details
+                else article.article_url
+            )
+            article_url = urljoin(
+                "https://fin.land.naver.com",
+                str(snapshot_article_url or f"/articles/{article.naver_article_id}"),
+            )
             realtor = details.get("realtor") or {}
             realtor_payload = None
             if realtor:
@@ -524,10 +790,10 @@ class QueryService:
                 BrokerRegistration(
                     article_id=article.naver_article_id,
                     realtor_name=realtor.get("name") or "",
-                    provider=article.provider,
-                    is_npay=article.is_npay,
+                    provider=provider,
+                    is_npay=is_npay,
                     detail_collected=detail_collected,
-                    article_url=article.article_url,
+                    article_url=article_url,
                     advertised_price=details.get("advertised_price"),
                     price_per_3_point_3_m2=details.get("price_per_3_3m2"),
                     management_fee=details.get("management_fee"),
@@ -552,8 +818,10 @@ class QueryService:
                         if detail_collected
                         else None
                     ),
-                    first_seen_at=seoul_iso(article.first_seen_at),
-                    last_seen_at=seoul_iso(article.last_seen_at),
+                    first_seen_at=seoul_iso(
+                        first_seen_by_article.get(article.id, snapshot.captured_at)
+                    ),
+                    last_seen_at=seoul_iso(snapshot.captured_at),
                     captured_at=seoul_iso(snapshot.captured_at),
                     verified_at=(
                         details.get("verified_at")
@@ -609,17 +877,40 @@ class QueryService:
         _, apartment_snapshot, selected_run, _ = await self._latest_result(
             complex_id=apartment.naver_complex_id, run_id=run_id
         )
-        rows = await self._as_of_listing_rows(
-            apartment_id=apartment.id, captured_at=apartment_snapshot.captured_at
+        rows = await self._listing_rows_for_run(
+            apartment_id=apartment.id,
+            selected_run=selected_run,
         )
         row = next((item for item in rows if item[1].id == listing_group_id), None)
+        absence_record: _AbsenceRecord | None = None
         if row is None:
-            raise QueryNotFoundError("선택한 조사 시점에 매물이 없습니다.")
+            absence_records = await self._absence_states_as_of_run(
+                apartment_id=apartment.id,
+                selected_run=selected_run,
+            )
+            absence_record = next(
+                (
+                    record
+                    for record in absence_records
+                    if record.row[1].id == listing_group_id
+                ),
+                None,
+            )
+            if absence_record is None:
+                raise QueryNotFoundError("선택한 조사 시점에 매물이 없습니다.")
+            row = absence_record.row
         event_statuses = await self._event_statuses(selected_run.id)
         summary = self._listing_summary(
             row,
             selected_run_id=selected_run.id,
-            event_status=event_statuses.get(listing_group_id),
+            event_status=(
+                absence_record.status
+                if absence_record is not None
+                else event_statuses.get(listing_group_id)
+            ),
+            removed_at=(
+                absence_record.removed_at if absence_record is not None else None
+            ),
         )
         snapshot = row[0]
         market_detail = await self.session.scalar(
@@ -627,14 +918,25 @@ class QueryService:
                 MarketDetailSnapshot.listing_snapshot_id == snapshot.id
             )
         )
-        registrations = await self._broker_registrations(
-            group_id=listing_group_id, captured_at=apartment_snapshot.captured_at
+        registrations = await self._broker_registrations_for_run(
+            group_id=listing_group_id,
+            run_id=snapshot.run_id,
         )
+        captured_apartment = apartment_snapshot.details_json
         return ListingDetail(
             **summary.model_dump(),
             apartment_id=apartment.id,
             complex_id=apartment.naver_complex_id,
-            complex_name=apartment.name,
+            complex_name=str(
+                (captured_apartment.get("name") or "")
+                if "name" in captured_apartment
+                else apartment.name
+            ),
+            absence_detected_at=(
+                seoul_iso(absence_record.detected_at)
+                if absence_record is not None
+                else None
+            ),
             registrations=registrations,
             market_details=self._market_details(market_detail),
         )
@@ -650,13 +952,23 @@ class QueryService:
             trade_type=None,
             status=None,
         )
-        recent = await self.apartments(query=None, page=1, page_size=100)
+        ranked_apartments = self._ranked_apartment_snapshots()
+        apartment_count = int(
+            (
+                await self.session.scalar(
+                    select(func.count())
+                    .select_from(ranked_apartments)
+                    .where(ranked_apartments.c.snapshot_rank == 1)
+                )
+            )
+            or 0
+        )
         return DashboardResponse(
             source_id=source.id,
             source_url=source.normalized_url,
             run_id=run.id,
             collected_at=seoul_iso(snapshot.captured_at),
+            apartment_count=apartment_count,
             apartment=apartment_detail,
             listings=listing_page.items,
-            recent_apartments=recent.items,
         )

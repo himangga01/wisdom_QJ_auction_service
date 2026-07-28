@@ -55,7 +55,12 @@ Invoke-CheckedCommand `
 $composeFile = Join-Path $RepositoryRoot 'docker-compose.production.yml'
 Invoke-CheckedCommand `
     -Executable $dockerCommand.Source `
-    -Arguments @('compose', '-f', $composeFile, 'up', '-d', '--build') `
+    -Arguments @(
+        'compose',
+        '--env-file', $dockerEnvFile,
+        '-f', $composeFile,
+        'up', '-d', '--build'
+    ) `
     -WorkingDirectory $RepositoryRoot `
     -FailureMessage 'Docker Compose 서비스 시작에 실패했습니다.'
 

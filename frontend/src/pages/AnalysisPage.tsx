@@ -14,7 +14,7 @@ export function AnalysisPage() {
     ? Math.round((demo.progressStep / 3) * 100)
     : analysis.progress
   const selectedDemoApartment = demo.dataset?.apartments.find((apartment) => apartment.complexId === demo.selectedApartmentId)
-  const selectedRealApartment = analysis.recentApartments.find((apartment) => apartment.complexId === analysis.selectedApartmentId)
+  const selectedRealApartment = analysis.selectedApartment
   const selectedApartment = analysis.isDemo ? selectedDemoApartment : selectedRealApartment
   const collectedAt = analysis.isDemo ? demo.dataset?.collectedAt : selectedRealApartment?.collectedAt
   const completed = status === 'completed' || status === 'partial'

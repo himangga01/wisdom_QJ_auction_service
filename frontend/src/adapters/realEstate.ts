@@ -3,6 +3,7 @@ import type {
   ApartmentSummaryApi,
   BrokerRegistrationApi,
   DashboardResponseApi,
+  ListingAbsenceApi,
   ListingDetailApi,
   ListingSummaryApi,
 } from '../types/api'
@@ -33,13 +34,16 @@ function stringValue(source: Record<string, unknown>, keys: string[], fallback =
 }
 
 function adaptDetails(details: Record<string, unknown>): ApartmentDetails {
+  const approvalDate = stringValue(details, ['approvalDate', 'useApproveDate', '사용승인일', '승인일'], '') || undefined
+  const explicitCompletedYear = numberValue(details, ['completedYear', 'completionYear', 'useApproveYear', '준공년도'])
+  const approvalYear = approvalDate?.match(/(?:19|20)\d{2}/)?.[0]
   return {
     householdCount: numberValue(details, ['householdCount', 'totalHouseholdCount', '세대수']),
     buildingCount: numberValue(details, ['buildingCount', 'totalBuildingCount', '동수', '동 수']),
-    completedYear: numberValue(details, ['completedYear', 'completionYear', 'useApproveYear', '준공년도']),
+    completedYear: explicitCompletedYear || (approvalYear ? Number(approvalYear) : 0),
     parkingPerHousehold: numberValue(details, ['parkingPerHousehold', '세대당주차', '세대당 주차']),
     heating: stringValue(details, ['heating', 'heatingMethod', '난방', '난방방식']),
-    approvalDate: stringValue(details, ['approvalDate', 'useApproveDate', '사용승인일', '승인일'], '') || undefined,
+    approvalDate,
     parkingCount: numberValue(details, ['parkingCount', 'parking', '주차대수'], Number.NaN) || undefined,
     entranceType: stringValue(details, ['entranceType', 'entrance', '현관', '현관구조'], '') || undefined,
     floorAreaRatio: numberValue(details, ['floorAreaRatio', '용적률'], Number.NaN) || undefined,
@@ -58,7 +62,7 @@ function tradeType(value: string): TradeType {
 }
 
 function listingStatus(value: string): ListingChangeStatus {
-  return value === 'new' || value === 'changed' || value === 'removed' ? value : 'active'
+  return value === 'new' || value === 'changed' || value === 'missing' || value === 'removed' ? value : 'active'
 }
 
 function adaptRegistration(registration: BrokerRegistrationApi) {
@@ -108,16 +112,22 @@ export function adaptListing(listing: ListingSummaryApi): ListingGroup {
     building: listing.building ?? '-',
     tradeType: tradeType(listing.tradeType),
     price: listing.price ?? listing.deposit ?? 0,
+    rawPrice: listing.price,
+    deposit: listing.deposit ?? undefined,
     monthlyRent: listing.monthlyRent ?? undefined,
     previousPrice: listing.previousPrice ?? undefined,
     supplyAreaM2: listing.supplyAreaM2 ?? 0,
     exclusiveAreaM2: listing.exclusiveAreaM2 ?? 0,
+    rawSupplyAreaM2: listing.supplyAreaM2,
+    rawExclusiveAreaM2: listing.exclusiveAreaM2,
     floor: listing.floor ?? '-',
     direction: listing.direction ?? '-',
     status: listingStatus(listing.status),
     discoveredAt: listing.discoveredAt,
     lastSeenAt: listing.lastSeenAt,
+    removedAt: listing.removedAt ?? undefined,
     registrations: [],
+    brokerRegistrationsLoaded: false,
     aggregate: {
       optionTags: listing.aggregate.optionTags,
       moveInSummary: listing.aggregate.moveInSummary,
@@ -130,10 +140,25 @@ export function adaptListing(listing: ListingSummaryApi): ListingGroup {
   }
 }
 
+export function adaptListingAbsence(absence: ListingAbsenceApi, selectedRunId?: string): ListingGroup {
+  return {
+    ...adaptListing({
+      ...absence.lastSnapshot,
+      status: absence.status,
+      removedAt: absence.removedAt,
+    }),
+    runId: selectedRunId ?? absence.lastSnapshot.runId,
+    absenceDetectedAt: absence.detectedAt,
+    removedAt: absence.removedAt ?? undefined,
+  }
+}
+
 export function adaptListingDetail(listing: ListingDetailApi): ListingGroup {
   return {
     ...adaptListing(listing),
+    absenceDetectedAt: listing.absenceDetectedAt ?? undefined,
     registrations: listing.registrations.map(adaptRegistration),
+    brokerRegistrationsLoaded: true,
   }
 }
 

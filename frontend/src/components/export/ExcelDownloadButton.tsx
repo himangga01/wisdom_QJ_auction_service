@@ -16,9 +16,7 @@ export function ExcelDownloadButton({ dataset, sourceId, from, to }: ExcelDownlo
   const analysis = useAnalysis()
   const [downloading, setDownloading] = useState(false)
   const [error, setError] = useState('')
-  const selectedApartment = analysis.recentApartments.find((item) => item.complexId === analysis.selectedApartmentId)
-    ?? analysis.recentApartments[0]
-  const resolvedSourceId = sourceId ?? selectedApartment?.sourceId
+  const resolvedSourceId = sourceId ?? analysis.selectedApartment?.sourceId
 
   const handleDownload = async () => {
     setError('')

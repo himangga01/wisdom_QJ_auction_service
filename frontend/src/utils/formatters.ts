@@ -37,7 +37,8 @@ export const tradeTypeLabels: Record<TradeType, string> = {
 export const listingStatusLabels: Record<ListingChangeStatus, string> = {
   active: '유지',
   new: '신규',
-  changed: '가격 변경',
+  changed: '정보 변경',
+  missing: '일시 미노출',
   removed: '삭제',
 }
 

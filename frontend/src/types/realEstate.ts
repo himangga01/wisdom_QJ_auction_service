@@ -4,7 +4,7 @@ export type CrawlStatus = 'idle' | 'running' | 'completed' | 'failed'
 
 export type TradeType = 'sale' | 'jeonse' | 'monthly'
 
-export type ListingChangeStatus = 'active' | 'new' | 'changed' | 'removed'
+export type ListingChangeStatus = 'active' | 'new' | 'changed' | 'missing' | 'removed'
 
 export interface RealtorProfile {
   representativeName: string
@@ -107,17 +107,23 @@ export interface ListingGroup {
   building: string
   tradeType: TradeType
   price: number
+  rawPrice?: number | null
+  deposit?: number
   monthlyRent?: number
   previousPrice?: number
   supplyAreaM2: number
   exclusiveAreaM2: number
+  rawSupplyAreaM2?: number | null
+  rawExclusiveAreaM2?: number | null
   floor: string
   direction: string
   status: ListingChangeStatus
   discoveredAt: string
   lastSeenAt: string
+  absenceDetectedAt?: string
   removedAt?: string
   registrations: BrokerRegistration[]
+  brokerRegistrationsLoaded?: boolean
   aggregate?: ListingAggregate
   marketDetails?: ListingMarketDetails
 }

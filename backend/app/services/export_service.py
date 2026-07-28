@@ -7,13 +7,14 @@ from io import BytesIO
 import json
 import re
 from typing import Any
+from urllib.parse import urljoin
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
 from openpyxl import Workbook
 from openpyxl.cell import WriteOnlyCell
 from openpyxl.styles import Font
-from sqlalchemy import select
+from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import (
@@ -161,6 +162,21 @@ SHEET_HEADERS: dict[str, tuple[str, ...]] = {
     ),
 }
 
+APARTMENT_SUMMARY_SHEET = next(iter(SHEET_HEADERS))
+APARTMENT_DETAIL_EXPORT_FIELDS: tuple[tuple[str, str], ...] = (
+    ("household_count", "세대수"),
+    ("building_count", "동수"),
+    ("approval_date", "사용승인일"),
+    ("parking_count", "총주차대수"),
+    ("parking_per_household", "세대당주차대수"),
+    ("heating", "난방"),
+    ("entrance_type", "현관구조"),
+    ("floor_area_ratio", "용적률"),
+    ("building_coverage_ratio", "건폐율"),
+    ("management_office_phone", "관리사무소전화번호"),
+    ("builders", "시공사"),
+)
+
 
 class ExportNotFoundError(LookupError):
     code = "export_source_not_found"
@@ -201,6 +217,8 @@ def create_export_workbook() -> tuple[Workbook, dict[str, Any]]:
     workbook = Workbook(write_only=True)
     sheets: dict[str, Any] = {}
     for title, headers in SHEET_HEADERS.items():
+        if title == APARTMENT_SUMMARY_SHEET:
+            headers = (*headers, *(label for _, label in APARTMENT_DETAIL_EXPORT_FIELDS))
         sheet = workbook.create_sheet(title)
         header_cells = []
         for header in headers:
@@ -223,6 +241,27 @@ def _json(value: Any) -> str:
 def _detail(details: Mapping[str, Any], key: str, default: Any = "") -> Any:
     value = details.get(key, default)
     return default if value is None else value
+
+
+def _detail_cell(details: Mapping[str, Any], key: str) -> Any:
+    value = _detail(details, key)
+    if isinstance(value, (list, tuple, set)):
+        return ", ".join(str(item) for item in value)
+    if isinstance(value, dict):
+        return _json(value)
+    return value
+
+
+def _snapshot_apartment_name(
+    snapshot: ApartmentSnapshot,
+    fallback: str,
+) -> str:
+    captured = snapshot.details_json
+    return str(
+        (captured.get("name") or "")
+        if "name" in captured
+        else fallback
+    )
 
 
 def _date_bounds(
@@ -326,16 +365,18 @@ class ExportService:
         statement = _within(statement, ApartmentSnapshot.captured_at, start, end)
         result = await self.session.stream(statement)
         async for snapshot, run in result:
-            details = snapshot.details_json.get("details", snapshot.details_json)
+            captured = snapshot.details_json
+            details = captured.get("details", captured)
             sheet.append(
                 [
                     apartment.naver_complex_id,
-                    apartment.name,
-                    apartment.address,
+                    captured.get("name") if "name" in captured else apartment.name,
+                    captured.get("address") if "address" in captured else "",
                     str(run.id),
                     seoul_iso(snapshot.captured_at),
                     run.status,
                     _json(details),
+                    *(_detail_cell(details, key) for key, _ in APARTMENT_DETAIL_EXPORT_FIELDS),
                 ]
             )
 
@@ -349,9 +390,21 @@ class ExportService:
         end: datetime | None,
     ) -> None:
         statement = (
-            select(ListingSnapshot, ListingGroup, ListingAggregate)
+            select(
+                ListingSnapshot,
+                ListingGroup,
+                ListingAggregate,
+                ApartmentSnapshot,
+            )
             .join(ListingGroup, ListingGroup.id == ListingSnapshot.listing_group_id)
             .join(CrawlRun, CrawlRun.id == ListingSnapshot.run_id)
+            .join(
+                ApartmentSnapshot,
+                and_(
+                    ApartmentSnapshot.run_id == ListingSnapshot.run_id,
+                    ApartmentSnapshot.apartment_id == apartment.id,
+                ),
+            )
             .outerjoin(
                 ListingAggregate,
                 ListingAggregate.listing_snapshot_id == ListingSnapshot.id,
@@ -364,11 +417,15 @@ class ExportService:
         )
         statement = _within(statement, ListingSnapshot.captured_at, start, end)
         result = await self.session.stream(statement)
-        async for snapshot, group, aggregate in result:
+        async for snapshot, group, aggregate, apartment_snapshot in result:
+            apartment_name = _snapshot_apartment_name(
+                apartment_snapshot,
+                apartment.name,
+            )
             listing_sheet.append(
                 [
                     apartment.naver_complex_id,
-                    apartment.name,
+                    apartment_name,
                     str(snapshot.run_id),
                     seoul_iso(snapshot.captured_at),
                     str(group.id),
@@ -394,7 +451,7 @@ class ExportService:
             aggregate_sheet.append(
                 [
                     apartment.naver_complex_id,
-                    apartment.name,
+                    apartment_name,
                     str(group.id),
                     str(snapshot.run_id),
                     seoul_iso(snapshot.captured_at),
@@ -417,13 +474,25 @@ class ExportService:
         end: datetime | None,
     ) -> None:
         statement = (
-            select(BrokerArticleSnapshot, BrokerArticle, ListingGroup)
+            select(
+                BrokerArticleSnapshot,
+                BrokerArticle,
+                ListingGroup,
+                ApartmentSnapshot,
+            )
             .join(
                 BrokerArticle,
                 BrokerArticle.id == BrokerArticleSnapshot.broker_article_id,
             )
             .join(ListingGroup, ListingGroup.id == BrokerArticle.listing_group_id)
             .join(CrawlRun, CrawlRun.id == BrokerArticleSnapshot.run_id)
+            .join(
+                ApartmentSnapshot,
+                and_(
+                    ApartmentSnapshot.run_id == BrokerArticleSnapshot.run_id,
+                    ApartmentSnapshot.apartment_id == apartment.id,
+                ),
+            )
             .where(
                 ListingGroup.apartment_id == apartment.id,
                 CrawlRun.source_id == source.id,
@@ -435,9 +504,32 @@ class ExportService:
         )
         statement = _within(statement, BrokerArticleSnapshot.captured_at, start, end)
         result = await self.session.stream(statement)
-        async for snapshot, article, group in result:
+        async for snapshot, article, group, apartment_snapshot in result:
             details = snapshot.details_json
             detail_collected = details.get("detail_collected", True)
+            apartment_name = _snapshot_apartment_name(
+                apartment_snapshot,
+                apartment.name,
+            )
+            provider = (
+                str(details.get("provider") or "")
+                if "provider" in details
+                else article.provider
+            )
+            is_npay = (
+                bool(details.get("is_npay"))
+                if "is_npay" in details
+                else article.is_npay
+            )
+            snapshot_article_url = (
+                details.get("article_url")
+                if "article_url" in details
+                else article.article_url
+            )
+            article_url = urljoin(
+                "https://fin.land.naver.com",
+                str(snapshot_article_url or f"/articles/{article.naver_article_id}"),
+            )
             realtor = details.get("realtor") or {}
             market_details = (
                 details.get("market_details") or {} if detail_collected else {}
@@ -448,14 +540,14 @@ class ExportService:
             sheet.append(
                 [
                     apartment.naver_complex_id,
-                    apartment.name,
+                    apartment_name,
                     str(group.id),
                     str(snapshot.run_id),
                     article.naver_article_id,
-                    article.provider,
-                    "Y" if article.is_npay else "N",
+                    provider,
+                    "Y" if is_npay else "N",
                     "Y" if detail_collected else "N",
-                    article.article_url,
+                    article_url,
                     advertised_price,
                     format_korean_won(advertised_price),
                     per_area_price,
@@ -503,13 +595,25 @@ class ExportService:
         end: datetime | None,
     ) -> None:
         statement = (
-            select(MarketDetailSnapshot, ListingSnapshot, ListingGroup)
+            select(
+                MarketDetailSnapshot,
+                ListingSnapshot,
+                ListingGroup,
+                ApartmentSnapshot,
+            )
             .join(
                 ListingSnapshot,
                 ListingSnapshot.id == MarketDetailSnapshot.listing_snapshot_id,
             )
             .join(ListingGroup, ListingGroup.id == ListingSnapshot.listing_group_id)
             .join(CrawlRun, CrawlRun.id == ListingSnapshot.run_id)
+            .join(
+                ApartmentSnapshot,
+                and_(
+                    ApartmentSnapshot.run_id == ListingSnapshot.run_id,
+                    ApartmentSnapshot.apartment_id == apartment.id,
+                ),
+            )
             .where(
                 ListingGroup.apartment_id == apartment.id,
                 CrawlRun.source_id == source.id,
@@ -518,14 +622,18 @@ class ExportService:
         )
         statement = _within(statement, ListingSnapshot.captured_at, start, end)
         result = await self.session.stream(statement)
-        async for detail, snapshot, group in result:
+        async for detail, snapshot, group, apartment_snapshot in result:
             location = dict(detail.location_json)
             complex_detail = location.pop("_complex", {})
             extra_fields = location.pop("_extra", {})
+            apartment_name = _snapshot_apartment_name(
+                apartment_snapshot,
+                apartment.name,
+            )
             sheet.append(
                 [
                     apartment.naver_complex_id,
-                    apartment.name,
+                    apartment_name,
                     str(group.id),
                     str(snapshot.run_id),
                     seoul_iso(snapshot.captured_at),
@@ -577,9 +685,16 @@ class ExportService:
         end: datetime | None,
     ) -> None:
         statement = (
-            select(ChangeEvent, ListingGroup)
+            select(ChangeEvent, ListingGroup, ApartmentSnapshot)
             .join(ListingGroup, ListingGroup.id == ChangeEvent.listing_group_id)
             .join(CrawlRun, CrawlRun.id == ChangeEvent.run_id)
+            .join(
+                ApartmentSnapshot,
+                and_(
+                    ApartmentSnapshot.run_id == ChangeEvent.run_id,
+                    ApartmentSnapshot.apartment_id == apartment.id,
+                ),
+            )
             .where(
                 ListingGroup.apartment_id == apartment.id,
                 CrawlRun.source_id == source.id,
@@ -588,11 +703,11 @@ class ExportService:
         )
         statement = _within(statement, ChangeEvent.detected_at, start, end)
         result = await self.session.stream(statement)
-        async for event, group in result:
+        async for event, group, apartment_snapshot in result:
             sheet.append(
                 [
                     apartment.naver_complex_id,
-                    apartment.name,
+                    _snapshot_apartment_name(apartment_snapshot, apartment.name),
                     str(event.run_id),
                     str(group.id),
                     event.event_type,

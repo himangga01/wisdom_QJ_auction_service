@@ -73,7 +73,7 @@ class ComplexDetail(CapturedModel):
     complex_id: str
     name: str
     address: str
-    details: dict[str, str] = Field(default_factory=dict)
+    details: dict[str, object] = Field(default_factory=dict)
 
 
 class ListingDetail(CapturedModel):

@@ -18,6 +18,10 @@ function detailUrl(apartment: ApartmentSummary, listing: ListingGroup): string {
   return `/apartments/${apartment.complexId}/listings/${listing.groupId}${runQuery}`
 }
 
+function registrationCount(listing: ListingGroup): number {
+  return listing.aggregate?.sourceCount ?? listing.registrations.length
+}
+
 function CompactOptionTags({ listing, limit = 5 }: { listing: ListingGroup; limit?: number }) {
   const information = aggregateListingAdditionalInfo(listing)
   const visibleTags = information.optionTags.slice(0, limit)
@@ -39,7 +43,7 @@ function CompactRegistrationList({ listing }: { listing: ListingGroup }) {
   return (
     <details className="group mt-4 border-t border-slate-100 pt-3">
       <summary className="flex cursor-pointer list-none items-center justify-between gap-3 rounded-lg py-1 outline-none focus-visible:ring-4 focus-visible:ring-emerald-100">
-        <span className="flex items-center gap-1.5 text-xs font-extrabold text-slate-600"><Users size={14} /> 중개사 {listing.registrations.length}곳에서 등록했어요{npayCount ? <span className="text-emerald-700">· Npay {npayCount}</span> : null}</span>
+        <span className="flex items-center gap-1.5 text-xs font-extrabold text-slate-600"><Users size={14} /> 중개사 {registrationCount(listing)}곳에서 등록했어요{npayCount ? <span className="text-emerald-700">· Npay {npayCount}</span> : null}</span>
         <ChevronDown className="shrink-0 text-slate-400 transition-transform group-open:rotate-180" size={15} />
       </summary>
       <div className="mt-3 max-h-72 space-y-2 overflow-y-auto pr-1">
@@ -81,7 +85,7 @@ function CompactCard({ apartment, listing }: { apartment: ApartmentSummary; list
         <div><dt className="text-slate-400">동·층</dt><dd className="mt-0.5 font-extrabold text-slate-800">{listing.building} · {listing.floor}</dd></div>
         <div><dt className="text-slate-400">전용면적</dt><dd className="mt-0.5 font-extrabold text-slate-800">{listing.exclusiveAreaM2}㎡</dd></div>
         <div><dt className="text-slate-400">방향</dt><dd className="mt-0.5 font-extrabold text-slate-800">{listing.direction}</dd></div>
-        <div><dt className="text-slate-400">중개사</dt><dd className="mt-0.5 font-extrabold text-slate-800">{listing.registrations.length}곳</dd></div>
+        <div><dt className="text-slate-400">중개사</dt><dd className="mt-0.5 font-extrabold text-slate-800">{registrationCount(listing)}곳</dd></div>
       </dl>
 
       <section className="mt-3 rounded-xl bg-slate-50 p-3">
@@ -138,7 +142,7 @@ function ListingTable({ apartment, listings }: { apartment: ApartmentSummary; li
                 <td className="px-4 py-3 font-extrabold text-slate-800">{listing.direction}</td>
                 <td className="max-w-64 px-4 py-3"><CompactOptionTags listing={listing} limit={4} /></td>
                 <td className="px-4 py-3 font-bold leading-5 text-slate-600">{information.managementFeeSummary}<span className="block text-slate-400">{information.moveInSummary}</span></td>
-                <td className="px-4 py-3 font-extrabold text-slate-800">{listing.registrations.length}곳<span className="mt-1 block font-bold text-slate-400">Npay {listing.registrations.filter((registration) => registration.isNpay).length}건</span></td>
+                <td className="px-4 py-3 font-extrabold text-slate-800">{registrationCount(listing)}곳<span className="mt-1 block font-bold text-slate-400">Npay {listing.registrations.filter((registration) => registration.isNpay).length}건</span></td>
                 <td className="px-4 py-3 text-right"><Link to={detailUrl(apartment, listing)} className="inline-flex rounded-lg border border-slate-200 px-3 py-2 font-extrabold text-emerald-700 hover:border-emerald-300">보기</Link></td>
               </tr>
             )

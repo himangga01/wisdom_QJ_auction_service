@@ -1,7 +1,7 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { createAnalysis, getAnalysis, getAnalysisResult } from '../api/analyses'
-import { apartmentKeys, getApartments } from '../api/apartments'
+import { apartmentKeys, getApartment, getApartments } from '../api/apartments'
 import { ApiError } from '../api/client'
 import type { AnalysisCreateApi, AnalysisRunStage, AnalysisRunStatus, ApartmentSummaryApi } from '../types/api'
 import { DEMO_STEPS, useDemoDashboard } from './useDemoDashboard'
@@ -11,7 +11,7 @@ export const USE_DEMO_DATA = import.meta.env.VITE_USE_DEMO_DATA === 'true'
 type AnalysisStatus = 'idle' | AnalysisRunStatus
 
 interface AnalysisProviderValue {
-  recentApartments: ApartmentSummaryApi[]
+  selectedApartment: ApartmentSummaryApi | null
   selectedApartmentId: string | null
   status: AnalysisStatus
   stage: AnalysisRunStage | null
@@ -22,8 +22,8 @@ interface AnalysisProviderValue {
   isDemo: boolean
   currentRunId: string | null
   startAnalysis(request: AnalysisCreateApi): Promise<string>
-  selectApartment(complexId: string): void
-  refreshRecentApartments(): Promise<void>
+  selectApartment(apartment: ApartmentSummaryApi): void
+  refreshSelectedApartment(): Promise<void>
 }
 
 const terminalStatuses = new Set<AnalysisRunStatus>([
@@ -52,23 +52,19 @@ function terminalError(status: AnalysisRunStatus | undefined, errorCode: string 
   return ''
 }
 
-function asDemoSummaries(): ApartmentSummaryApi[] {
-  return []
-}
-
 export function AnalysisProvider({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient()
   const demo = useDemoDashboard()
-  const [selectedApartmentId, setSelectedApartmentId] = useState<string | null>(null)
+  const [selectedApartment, setSelectedApartment] = useState<ApartmentSummaryApi | null>(null)
   const [currentRunId, setCurrentRunId] = useState<string | null>(null)
   const [acceptedStatus, setAcceptedStatus] = useState<AnalysisRunStatus | null>(null)
   const [submissionError, setSubmissionError] = useState('')
   const handledRunId = useRef<string | null>(null)
 
-  const apartmentsQuery = useQuery({
-    queryKey: apartmentKeys.page('', 1, 100),
-    queryFn: () => getApartments(),
-    enabled: !USE_DEMO_DATA,
+  const initialApartmentQuery = useQuery({
+    queryKey: apartmentKeys.page('', 1, 1),
+    queryFn: () => getApartments({ page: 1, pageSize: 1 }),
+    enabled: !USE_DEMO_DATA && selectedApartment === null,
     staleTime: 30_000,
   })
 
@@ -82,23 +78,11 @@ export function AnalysisProvider({ children }: { children: ReactNode }) {
     },
   })
 
-  const recentApartments = USE_DEMO_DATA ? asDemoSummaries() : (apartmentsQuery.data?.items ?? [])
-
   useEffect(() => {
-    if (USE_DEMO_DATA) {
-      setSelectedApartmentId(demo.selectedApartmentId || null)
-      return
-    }
-    if (!recentApartments.length) {
-      setSelectedApartmentId(null)
-      return
-    }
-    setSelectedApartmentId((current) => (
-      current && recentApartments.some((apartment) => apartment.complexId === current)
-        ? current
-        : recentApartments[0].complexId
-    ))
-  }, [demo.selectedApartmentId, recentApartments])
+    if (USE_DEMO_DATA || selectedApartment) return
+    const firstApartment = initialApartmentQuery.data?.items[0]
+    if (firstApartment) setSelectedApartment(firstApartment)
+  }, [initialApartmentQuery.data?.items, selectedApartment])
 
   useEffect(() => {
     const run = analysisQuery.data
@@ -108,7 +92,8 @@ export function AnalysisProvider({ children }: { children: ReactNode }) {
     if (run.status !== 'completed' && run.status !== 'partial') return
     void (async () => {
       const result = await getAnalysisResult(run.runId)
-      setSelectedApartmentId(result.naverComplexId)
+      const apartment = await getApartment(result.naverComplexId, result.runId)
+      setSelectedApartment(apartment)
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: apartmentKeys.all }),
         queryClient.invalidateQueries({ queryKey: ['dashboard'] }),
@@ -137,10 +122,15 @@ export function AnalysisProvider({ children }: { children: ReactNode }) {
     }
   }, [demo])
 
-  const refreshRecentApartments = useCallback(async (): Promise<void> => {
-    if (USE_DEMO_DATA) return
-    await apartmentsQuery.refetch()
-  }, [apartmentsQuery])
+  const refreshSelectedApartment = useCallback(async (): Promise<void> => {
+    if (USE_DEMO_DATA || !selectedApartment) return
+    const apartment = await getApartment(
+      selectedApartment.complexId,
+      undefined,
+      selectedApartment.sourceId,
+    )
+    setSelectedApartment(apartment)
+  }, [selectedApartment])
 
   const realStatus = analysisQuery.data?.status ?? acceptedStatus ?? 'idle'
   const status: AnalysisStatus = USE_DEMO_DATA ? demo.status : realStatus
@@ -149,34 +139,35 @@ export function AnalysisProvider({ children }: { children: ReactNode }) {
     : (analysisQuery.data?.progress ?? 0)
   const error = USE_DEMO_DATA
     ? demo.error
-    : (submissionError || apiErrorMessage(analysisQuery.error ?? apartmentsQuery.error).replace(
+    : (submissionError || apiErrorMessage(analysisQuery.error ?? initialApartmentQuery.error).replace(
       '요청을 처리하지 못했습니다. 잠시 후 다시 시도해 주세요.',
-      analysisQuery.error || apartmentsQuery.error ? '저장된 조사 데이터를 불러오지 못했습니다.' : '',
+      analysisQuery.error || initialApartmentQuery.error ? '저장된 조사 데이터를 불러오지 못했습니다.' : '',
     ) || terminalError(analysisQuery.data?.status, analysisQuery.data?.errorCode))
 
   const value = useMemo<AnalysisProviderValue>(() => ({
-    recentApartments,
-    selectedApartmentId,
+    selectedApartment,
+    selectedApartmentId: selectedApartment?.complexId ?? null,
     status,
     stage: USE_DEMO_DATA ? null : (analysisQuery.data?.stage ?? null),
     progress,
     error,
-    isLoading: USE_DEMO_DATA ? false : apartmentsQuery.isLoading,
-    isEmpty: !apartmentsQuery.isLoading && recentApartments.length === 0,
+    isLoading: USE_DEMO_DATA ? false : analysisQuery.isLoading || initialApartmentQuery.isLoading,
+    isEmpty: !USE_DEMO_DATA && !initialApartmentQuery.isLoading && (initialApartmentQuery.data?.total ?? 0) === 0,
     isDemo: USE_DEMO_DATA,
     currentRunId: USE_DEMO_DATA ? null : currentRunId,
     startAnalysis,
-    selectApartment: setSelectedApartmentId,
-    refreshRecentApartments,
+    selectApartment: setSelectedApartment,
+    refreshSelectedApartment,
   }), [
     analysisQuery.data?.stage,
-    apartmentsQuery.isLoading,
+    analysisQuery.isLoading,
     currentRunId,
     error,
+    initialApartmentQuery.data?.total,
+    initialApartmentQuery.isLoading,
     progress,
-    recentApartments,
-    refreshRecentApartments,
-    selectedApartmentId,
+    refreshSelectedApartment,
+    selectedApartment,
     startAnalysis,
     status,
   ])

@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { CalendarCheck2, CalendarClock, Check, Clock3, Link2, PlayCircle, Trash2 } from 'lucide-react'
-import { useEffect, useMemo, useState, type FormEvent } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
 import {
   createSchedule,
   deleteSchedule,
@@ -43,10 +43,7 @@ export function SchedulePage() {
   const queryClient = useQueryClient()
   const analysis = useAnalysis()
   const demo = useDemoAnalysis()
-  const selectedSource = useMemo(
-    () => analysis.recentApartments.find((item) => item.complexId === analysis.selectedApartmentId) ?? analysis.recentApartments[0],
-    [analysis.recentApartments, analysis.selectedApartmentId],
-  )
+  const selectedSource = analysis.selectedApartment
   const [draft, setDraft] = useState<ScheduleDraft>({
     enabled: true,
     cadence: 'daily',

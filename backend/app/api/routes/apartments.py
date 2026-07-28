@@ -39,9 +39,15 @@ async def get_apartments(
 async def get_apartment(
     complex_id: str,
     query_service: Annotated[QueryService, Depends(service)],
+    run_id: Annotated[UUID | None, Query(alias="runId")] = None,
+    source_id: Annotated[UUID | None, Query(alias="sourceId")] = None,
 ) -> ApartmentDetail:
     try:
-        return await query_service.apartment(complex_id)
+        return await query_service.apartment(
+            complex_id,
+            run_id=run_id,
+            source_id=source_id,
+        )
     except QueryNotFoundError as error:
         raise not_found(error) from error
 
@@ -50,9 +56,10 @@ async def get_apartment(
 async def get_apartment_history(
     complex_id: str,
     query_service: Annotated[QueryService, Depends(service)],
+    source_id: Annotated[UUID | None, Query(alias="sourceId")] = None,
 ) -> list[ApartmentHistoryPoint]:
     try:
-        return await query_service.history(complex_id)
+        return await query_service.history(complex_id, source_id=source_id)
     except QueryNotFoundError as error:
         raise not_found(error) from error
 
@@ -67,7 +74,7 @@ async def get_apartment_listings(
         Query(alias="tradeType"),
     ] = None,
     listing_status: Annotated[
-        Literal["active", "new", "changed", "removed"] | None,
+        Literal["active", "new", "changed", "missing", "removed"] | None,
         Query(alias="status"),
     ] = None,
 ) -> ListingPage:
@@ -80,4 +87,3 @@ async def get_apartment_listings(
         )
     except QueryNotFoundError as error:
         raise not_found(error) from error
-

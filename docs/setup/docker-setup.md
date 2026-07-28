@@ -33,7 +33,9 @@ docker compose version
 Copy-Item .\backend\.env.example .\backend\.env
 ```
 
-`backend/.env`의 `APP_RUNTIME=docker`, 데이터베이스 자격 증명, CORS와 수집 설정을 확인한다. PostgreSQL 관련 값을 바꾸면 Compose의 `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`와 `DATABASE_URL`을 서로 맞춰야 한다. 이 파일은 Git에 포함되지 않는다.
+`backend/.env`의 `APP_RUNTIME=docker`, 데이터베이스 자격 증명, CORS와 수집 설정을 확인한다. `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`와 `DATABASE_URL`의 사용자·비밀번호·DB 이름은 서로 일치해야 한다. 이 파일은 Git에 포함되지 않는다.
+
+`start.ps1 -Mode docker`는 `backend/.env`를 Docker Compose의 `--env-file`로 전달하므로 Compose 변수 치환과 컨테이너 환경변수가 같은 값을 사용한다. 전체 서비스의 공식 Compose 파일은 저장소 루트의 `docker-compose.production.yml`이다. `backend/docker-compose.yml`은 레거시 백엔드 개발용이며 전체 포탈 실행에 사용하지 않는다.
 
 ### 3. 시작과 접속
 
@@ -52,9 +54,9 @@ Copy-Item .\backend\.env.example .\backend\.env
 ### 4. 상태·로그·종료
 
 ```powershell
-docker compose -f .\docker-compose.production.yml ps
-docker compose -f .\docker-compose.production.yml logs --tail 100
-docker compose -f .\docker-compose.production.yml down
+docker compose --env-file .\backend\.env -f .\docker-compose.production.yml ps
+docker compose --env-file .\backend\.env -f .\docker-compose.production.yml logs --tail 100
+docker compose --env-file .\backend\.env -f .\docker-compose.production.yml down
 ```
 
 PostgreSQL 데이터는 `postgres_data`, Redis 데이터는 `redis_data` 볼륨에 유지된다. 데이터를 보존하려면 `down -v`를 사용하지 않는다. 운영 점검과 백업·복구 절차는 `docs/operations/runbook.md`를 따른다.
@@ -63,6 +65,6 @@ PostgreSQL 데이터는 `postgres_data`, Redis 데이터는 `redis_data` 볼륨�
 
 # AI Docker Runtime Contract (English)
 
-Install WSL 2 and Docker Desktop manually using the official links above. Confirm `docker version` and `docker compose version`, copy `backend/.env.example` to `backend/.env`, and keep `APP_RUNTIME=docker`.
+Install WSL 2 and Docker Desktop manually using the official links above. Confirm `docker version` and `docker compose version`, copy `backend/.env.example` to `backend/.env`, and keep `APP_RUNTIME=docker`. Keep `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, and the credentials embedded in `DATABASE_URL` aligned.
 
-Run `scripts/start.ps1 -Mode docker`. Compose exposes frontend `127.0.0.1:42880` and API `127.0.0.1:42881` while preserving container ports `80/8000`. Stop with `docker compose -f docker-compose.production.yml down`; never append `-v` unless explicit data deletion is approved. The scripts must not install Docker, modify unrelated processes, or delete persistent volumes.
+Run `scripts/start.ps1 -Mode docker`. The script passes `backend/.env` through Compose `--env-file`. The canonical full-service file is the repository-root `docker-compose.production.yml`; `backend/docker-compose.yml` is legacy backend-only development configuration. Compose exposes frontend `127.0.0.1:42880` and API `127.0.0.1:42881` while preserving container ports `80/8000`. Stop with `docker compose --env-file backend/.env -f docker-compose.production.yml down`; never append `-v` unless explicit data deletion is approved. The scripts must not install Docker, modify unrelated processes, or delete persistent volumes.

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import Field
@@ -34,8 +34,17 @@ class ListingSummary(ApiSchema):
     status: str
     discovered_at: str
     last_seen_at: str
+    removed_at: str | None = None
     captured_at: str
     aggregate: ListingAggregate
+
+
+class ListingAbsence(ApiSchema):
+    group_id: UUID
+    status: Literal["missing", "removed"]
+    last_snapshot: ListingSummary
+    detected_at: str
+    removed_at: str | None = None
 
 
 class ListingPage(ApiSchema):
@@ -43,6 +52,7 @@ class ListingPage(ApiSchema):
     run_id: UUID
     collected_at: str
     items: list[ListingSummary]
+    absent_items: list[ListingAbsence] = Field(default_factory=list)
 
 
 class MarketDetails(ApiSchema):
@@ -92,5 +102,6 @@ class ListingDetail(ListingSummary):
     apartment_id: UUID
     complex_id: str
     complex_name: str
+    absence_detected_at: str | None = None
     registrations: list[BrokerRegistration] = Field(default_factory=list)
     market_details: MarketDetails | None = None

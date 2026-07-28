@@ -55,6 +55,7 @@ from app.crawler.types import (
     ListingDetail,
     MarketDetails,
 )
+from app.domain.apartment_details import merge_apartment_details
 from app.domain.url_identity import normalize_source_url
 
 
@@ -958,6 +959,7 @@ class PlaywrightNaverLandCollector:
                 partial = False
                 seen_article_ids: set[str] = set()
                 collected_article_ids: set[str] = set()
+                apartment_detail_observations: list[tuple[str, dict[str, str]]] = []
                 address = ""
                 full_collection = _is_full_collection(active_scope)
 
@@ -1034,6 +1036,12 @@ class PlaywrightNaverLandCollector:
                             article.article_id
                             for article in group.articles
                         )
+                        apartment_detail_observations.extend(
+                            (article.article_id, article.market_details.complex)
+                            for article in group.articles
+                            if article.market_details is not None
+                            and article.market_details.complex
+                        )
                         if group.address_candidate:
                             address = address or group.address_candidate
 
@@ -1057,10 +1065,15 @@ class PlaywrightNaverLandCollector:
                     )
 
                 await self._progress("details", 70)
+                apartment_details, apartment_detail_warnings = merge_apartment_details(
+                    apartment_detail_observations
+                )
+                for warning in apartment_detail_warnings:
+                    _append_once(payload_warnings, warning)
                 return CrawlPayload(
                     status="partial" if partial else "completed",
                     apartment=apartment.model_copy(
-                        update={"address": address}
+                        update={"address": address, "details": apartment_details}
                     ),
                     listings=listings,
                     trade_counts=trade_counts,

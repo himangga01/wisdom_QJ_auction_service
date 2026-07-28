@@ -3,8 +3,6 @@ import {
   ArrowLeft,
   BadgeCheck,
   Building2,
-  CalendarClock,
-  Car,
   ChevronDown,
   CircleDollarSign,
   Clock3,
@@ -192,8 +190,8 @@ export function ListingDetailPage() {
     enabled: !analysis.isDemo && Boolean(listingId),
   })
   const apartmentQuery = useQuery({
-    queryKey: apartmentKeys.detail(complexId ?? ''),
-    queryFn: () => getApartment(complexId as string),
+    queryKey: apartmentKeys.detail(complexId ?? '', runId),
+    queryFn: () => getApartment(complexId as string, runId),
     enabled: !analysis.isDemo && Boolean(complexId),
   })
   const demoApartment = demo.dataset?.apartments.find((item) => item.complexId === complexId)
@@ -216,10 +214,17 @@ export function ListingDetailPage() {
   const hasPerRegistrationMarket = listing.registrations.some((registration) => registration.detailCollected && Boolean(registration.marketDetails))
   const npayCount = listing.registrations.filter((registration) => registration.isNpay).length
   const apartmentFacts = [
-    [Building2, '세대·동 수', apartment.details.householdCount > 0 && apartment.details.buildingCount > 0 ? `${apartment.details.householdCount.toLocaleString('ko-KR')}세대 · ${apartment.details.buildingCount}개동` : '-'],
-    [CalendarClock, '사용승인', apartment.details.approvalDate ?? (apartment.details.completedYear > 0 ? `${apartment.details.completedYear}년` : '-')],
-    [Car, '주차', apartment.details.parkingCount ? `${apartment.details.parkingCount.toLocaleString('ko-KR')}대${apartment.details.parkingPerHousehold > 0 ? ` · 세대당 ${apartment.details.parkingPerHousehold}대` : ''}` : apartment.details.parkingPerHousehold > 0 ? `세대당 ${apartment.details.parkingPerHousehold}대` : '-'],
-    [Wrench, '난방·현관', [apartment.details.heating !== '-' ? apartment.details.heating : '', apartment.details.entranceType].filter(Boolean).join(' · ') || '-'],
+    ['세대수', apartment.details.householdCount > 0 ? `${apartment.details.householdCount.toLocaleString('ko-KR')}세대` : '-'],
+    ['동 수', apartment.details.buildingCount > 0 ? `${apartment.details.buildingCount.toLocaleString('ko-KR')}개동` : '-'],
+    ['사용승인일', apartment.details.approvalDate ?? (apartment.details.completedYear > 0 ? `${apartment.details.completedYear}년` : '-')],
+    ['총 주차대수', apartment.details.parkingCount ? `${apartment.details.parkingCount.toLocaleString('ko-KR')}대` : '-'],
+    ['세대당 주차', apartment.details.parkingPerHousehold > 0 ? `${apartment.details.parkingPerHousehold}대` : '-'],
+    ['난방방식', apartment.details.heating || '-'],
+    ['현관구조', apartment.details.entranceType || '-'],
+    ['용적률', apartment.details.floorAreaRatio ? `${apartment.details.floorAreaRatio}%` : '-'],
+    ['건폐율', apartment.details.buildingCoverageRatio ? `${apartment.details.buildingCoverageRatio}%` : '-'],
+    ['관리사무소 전화', apartment.details.managementOfficePhone || '-'],
+    ['시공사', apartment.details.builders?.length ? apartment.details.builders.join(', ') : '-'],
   ]
 
   return (
@@ -229,7 +234,13 @@ export function ListingDetailPage() {
         <div className="mt-5 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
           <div>
             <div className="flex flex-wrap items-center gap-2"><ChangeBadge status={listing.status} /><span className="text-sm font-extrabold text-slate-500">{tradeTypeLabels[listing.tradeType]}</span><span className="rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-extrabold text-emerald-700">중개사 통합 매물</span></div>
-            <h1 className={`mt-3 text-3xl font-black tracking-[-0.04em] ${listing.status === 'removed' ? 'text-rose-700 line-through' : 'text-slate-950'}`}>{listing.building} · {formatListingPrice(listing)}</h1>
+            <h1 className={`mt-3 text-3xl font-black tracking-[-0.04em] ${
+              listing.status === 'removed'
+                ? 'text-rose-700 line-through'
+                : listing.status === 'missing'
+                  ? 'text-sky-800'
+                  : 'text-slate-950'
+            }`}>{listing.building} · {formatListingPrice(listing)}</h1>
             <p className="mt-2 text-sm text-slate-500">{formatArea(listing)} · {listing.floor} · {listing.direction}</p>
           </div>
           <div className="rounded-2xl border border-slate-200 bg-white px-5 py-4">
@@ -241,19 +252,43 @@ export function ListingDetailPage() {
 
       {listing.status === 'removed' ? (
         <section className="rounded-2xl border border-rose-200 bg-rose-50 p-5">
-          <h2 className="font-black text-rose-800">이 매물은 최근 조사에서 사라졌습니다</h2>
+          <h2 className="font-black text-rose-800">이 매물은 삭제 상태로 확인되었습니다</h2>
           <p className="mt-1 text-sm text-rose-700">마지막 노출: {formatCollectedAt(listing.lastSeenAt)} · 삭제 확인: {listing.removedAt ? formatCollectedAt(listing.removedAt) : '-'}</p>
+        </section>
+      ) : null}
+
+      {listing.status === 'missing' ? (
+        <section className="rounded-2xl border border-sky-200 bg-sky-50 p-5">
+          <h2 className="font-black text-sky-800">선택한 조사에서 일시 미노출된 매물입니다</h2>
+          <p className="mt-1 text-sm leading-6 text-sky-700">
+            1회 미관측 상태로 아직 삭제로 확정하지 않습니다. 마지막 노출: {formatCollectedAt(listing.lastSeenAt)}
+            {' · '}일시 미노출 확인: {listing.absenceDetectedAt ? formatCollectedAt(listing.absenceDetectedAt) : '-'}
+          </p>
         </section>
       ) : null}
 
       <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <article className="rounded-2xl border border-slate-200 bg-white p-5"><p className="flex items-center gap-2 text-xs font-bold text-slate-400"><Building2 size={15} /> 동·층</p><p className="mt-2 font-black text-slate-900">{listing.building} · {listing.floor}</p></article>
-        <article className="rounded-2xl border border-slate-200 bg-white p-5"><p className="flex items-center gap-2 text-xs font-bold text-slate-400"><CircleDollarSign size={15} /> 현재 호가</p><p className="mt-2 font-black text-slate-900">{formatListingPrice(listing)}</p>{listing.previousPrice ? <p className="mt-1 text-xs text-amber-600 line-through">이전 {formatKoreanPrice(listing.previousPrice)}</p> : null}</article>
+        <article className="rounded-2xl border border-slate-200 bg-white p-5"><p className="flex items-center gap-2 text-xs font-bold text-slate-400"><CircleDollarSign size={15} /> {listing.status === 'missing' || listing.status === 'removed' ? '마지막 호가' : '현재 호가'}</p><p className="mt-2 font-black text-slate-900">{formatListingPrice(listing)}</p>{listing.previousPrice ? <p className="mt-1 text-xs text-amber-600 line-through">이전 {formatKoreanPrice(listing.previousPrice)}</p> : null}</article>
         <article className="rounded-2xl border border-slate-200 bg-white p-5"><p className="flex items-center gap-2 text-xs font-bold text-slate-400"><Ruler size={15} /> 면적</p><p className="mt-2 font-black text-slate-900">전용 {listing.exclusiveAreaM2}㎡</p><p className="mt-1 text-xs text-slate-400">공급 {listing.supplyAreaM2}㎡</p></article>
         <article className="rounded-2xl border border-slate-200 bg-white p-5"><p className="flex items-center gap-2 text-xs font-bold text-slate-400"><History size={15} /> 최초 발견</p><p className="mt-2 font-black text-slate-900">{formatCollectedAt(listing.discoveredAt)}</p></article>
       </section>
 
       <ListingAdditionalInfo listing={listing} />
+
+      <details className="group overflow-hidden rounded-3xl border border-slate-200 bg-white">
+        <summary className="flex cursor-pointer list-none items-center justify-between gap-4 p-5 outline-none focus-visible:ring-4 focus-visible:ring-inset focus-visible:ring-emerald-100 sm:p-6">
+          <h2 className="flex items-center gap-2 text-lg font-black text-slate-950"><Building2 size={19} className="text-emerald-600" /> 단지 기본정보 전체 보기</h2>
+          <span className="inline-flex items-center gap-1.5 text-xs font-extrabold text-slate-500">
+            <span className="group-open:hidden">펼치기</span>
+            <span className="hidden group-open:inline">접기</span>
+            <ChevronDown className="transition-transform group-open:rotate-180" size={15} />
+          </span>
+        </summary>
+        <dl className="grid gap-2 border-t border-slate-100 p-5 sm:grid-cols-2 sm:p-6 xl:grid-cols-3">
+          {apartmentFacts.map(([label, value]) => <DetailValue key={label} label={label} value={value} />)}
+        </dl>
+      </details>
 
       <details className="group overflow-hidden rounded-3xl border border-slate-200 bg-white">
         <summary className="flex cursor-pointer list-none flex-wrap items-center justify-between gap-4 p-5 outline-none focus-visible:ring-4 focus-visible:ring-inset focus-visible:ring-emerald-100 sm:p-6">
@@ -299,7 +334,7 @@ export function ListingDetailPage() {
             </article>
           </section>
 
-          <section className="grid gap-4 lg:grid-cols-3">
+          <section className="grid gap-4 lg:grid-cols-2">
             <article className="rounded-3xl border border-slate-200 bg-white p-5">
               <h2 className="flex items-center gap-2 font-black text-slate-950"><ReceiptText size={18} className="text-emerald-600" /> 거래 비용·세금</h2>
               <dl className="mt-4 space-y-2"><DetailValue label="중개보수" value={`최대 ${formatWon(market.brokerageFee)} · 상한 ${market.brokerageRate}%`} /><DetailValue label="취득세" value={`약 ${formatWon(market.acquisitionTax)}`} /><DetailValue label="재산세" value={`약 ${formatWon(market.propertyTax)}`} /><DetailValue label="종합부동산세" value={market.comprehensiveTax} /></dl>
@@ -307,12 +342,6 @@ export function ListingDetailPage() {
             <article className="rounded-3xl border border-slate-200 bg-white p-5">
               <h2 className="flex items-center gap-2 font-black text-slate-950"><Wrench size={18} className="text-emerald-600" /> 관리비 이력</h2>
               <dl className="mt-4 space-y-2"><DetailValue label={market.maintenance.referenceMonth} value={`${market.maintenance.referenceAmount.toLocaleString('ko-KR')}원`} /><DetailValue label="월 평균" value={`${market.maintenance.monthlyAverage.toLocaleString('ko-KR')}원`} /><DetailValue label="여름 평균" value={`${market.maintenance.summerAverage.toLocaleString('ko-KR')}원`} /><DetailValue label="겨울 평균" value={`${market.maintenance.winterAverage.toLocaleString('ko-KR')}원`} /></dl>
-            </article>
-            <article className="rounded-3xl border border-slate-200 bg-white p-5">
-              <h2 className="flex items-center gap-2 font-black text-slate-950"><Building2 size={18} className="text-emerald-600" /> 단지 정보</h2>
-              <dl className="mt-4 space-y-2">{apartmentFacts.map(([Icon, label, value]) => { const FactIcon = Icon as typeof Building2; return <div key={String(label)} className="rounded-xl bg-slate-50 p-3"><dt className="flex items-center gap-1.5 text-[11px] font-bold text-slate-400"><FactIcon size={13} /> {String(label)}</dt><dd className="mt-1 text-sm font-extrabold text-slate-800">{String(value)}</dd></div> })}</dl>
-              {apartment.details.builders?.length ? <p className="mt-3 text-xs leading-5 text-slate-500">시공사 <strong className="text-slate-700">{apartment.details.builders.join(', ')}</strong></p> : null}
-              {apartment.details.managementOfficePhone ? <p className="mt-1 text-xs text-slate-500">관리사무소 <strong className="text-slate-700">{apartment.details.managementOfficePhone}</strong></p> : null}
             </article>
           </section>
 

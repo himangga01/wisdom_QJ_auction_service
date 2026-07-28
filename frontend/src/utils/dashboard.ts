@@ -7,7 +7,9 @@ import type {
 } from '../types/realEstate'
 
 export function getCurrentListings(apartment: ApartmentSummary): ListingGroup[] {
-  return apartment.listingGroups.filter((listing) => listing.status !== 'removed')
+  return apartment.listingGroups.filter(
+    (listing) => listing.status !== 'missing' && listing.status !== 'removed',
+  )
 }
 
 export function getTradeMetrics(apartment: ApartmentSummary, tradeType: TradeType) {
