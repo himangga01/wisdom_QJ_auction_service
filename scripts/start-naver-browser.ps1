@@ -49,7 +49,9 @@ try {
         -ArgumentList @(
             '--remote-debugging-address=127.0.0.1',
             "--remote-debugging-port=$ChromeCdpPort",
-            "--user-data-dir=$NaverChromeProfilePath"
+            "--user-data-dir=$NaverChromeProfilePath",
+            '--no-first-run',
+            '--no-default-browser-check'
         ) `
         -PassThru
 

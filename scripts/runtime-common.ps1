@@ -13,6 +13,7 @@ $ApiPort = 42881
 $ChromeCdpPort = 42973
 $ChromeCdpUrl = "http://127.0.0.1:$ChromeCdpPort"
 $NaverChromeProfilePath = Join-Path $BackendDataRoot 'naver-chrome-profile'
+$LocalBootstrapTokenPath = Join-Path $BackendDataRoot 'bootstrap-token.txt'
 $ApiPidFile = Join-Path $RuntimeRoot 'api.pid'
 $FrontendPidFile = Join-Path $RuntimeRoot 'frontend.pid'
 $NaverChromePidFile = Join-Path $RuntimeRoot 'naver-chrome.pid'
@@ -47,13 +48,51 @@ function Get-LocalDatabaseUrl {
     return "sqlite+aiosqlite:///$normalizedPath"
 }
 
+function Ensure-LocalBootstrapToken {
+    param(
+        [string]$TokenPath = $LocalBootstrapTokenPath
+    )
+
+    $resolvedTokenPath = [System.IO.Path]::GetFullPath($TokenPath)
+    if (Test-Path -LiteralPath $resolvedTokenPath -PathType Leaf) {
+        $storedToken = (Get-Content -LiteralPath $resolvedTokenPath -Raw).Trim()
+        if ($storedToken -notmatch '^[a-f0-9]{64}$') {
+            throw "$resolvedTokenPath 의 bootstrap token 형식이 올바르지 않습니다."
+        }
+        return $storedToken
+    }
+
+    $tokenDirectory = Split-Path -Parent $resolvedTokenPath
+    New-Item -ItemType Directory -Path $tokenDirectory -Force | Out-Null
+    $tokenBytes = New-Object byte[] 32
+    $generator = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+    try {
+        $generator.GetBytes($tokenBytes)
+    }
+    finally {
+        $generator.Dispose()
+    }
+    $token = [System.BitConverter]::ToString($tokenBytes).Replace('-', '').ToLowerInvariant()
+    [System.IO.File]::WriteAllText(
+        $resolvedTokenPath,
+        $token,
+        [System.Text.Encoding]::ASCII
+    )
+    return $token
+}
+
 function Set-LocalRuntimeEnvironment {
+    param(
+        [string]$BootstrapTokenPath = $LocalBootstrapTokenPath
+    )
+
     $env:APP_RUNTIME = 'local'
     $env:DATABASE_URL = Get-LocalDatabaseUrl
     $env:CORS_ORIGINS = 'http://127.0.0.1:42880,http://localhost:42880'
-    $env:CRAWLER_BROWSER_MODE = 'external_chrome'
     $env:CRAWLER_CDP_URL = $ChromeCdpUrl
     $env:VITE_API_BASE_URL = '/api'
+    $env:AUTH_BOOTSTRAP_TOKEN = Ensure-LocalBootstrapToken `
+        -TokenPath $BootstrapTokenPath
 }
 
 function Test-LocalPortAvailable {
@@ -420,4 +459,32 @@ function Wait-LocalPortOpen {
         }
     }
     return $false
+}
+
+function Get-ApiHealth {
+    try {
+        return Invoke-RestMethod `
+            -Uri "http://127.0.0.1:$ApiPort/api/health" `
+            -TimeoutSec 3 `
+            -ErrorAction Stop
+    }
+    catch {
+        return $null
+    }
+}
+
+function Wait-ApiHealth {
+    param(
+        [int]$TimeoutSeconds = 20
+    )
+
+    $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
+    while ([DateTime]::UtcNow -lt $deadline) {
+        $health = Get-ApiHealth
+        if ($null -ne $health) {
+            return $health
+        }
+        Start-Sleep -Milliseconds 250
+    }
+    return $null
 }

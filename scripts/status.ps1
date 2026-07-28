@@ -1,10 +1,36 @@
 ﻿[CmdletBinding()]
-param()
+param(
+    [ValidateSet('local', 'docker')]
+    [string]$Mode = 'local'
+)
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 . (Join-Path $PSScriptRoot 'runtime-common.ps1')
+
+if ($Mode -eq 'docker') {
+    $dockerCommand = Get-Command docker.exe -ErrorAction SilentlyContinue
+    if ($null -eq $dockerCommand) {
+        $dockerCommand = Get-Command docker -ErrorAction SilentlyContinue
+    }
+    if ($null -eq $dockerCommand) {
+        throw 'Docker CLI를 찾을 수 없습니다.'
+    }
+    $composeFile = Join-Path $RepositoryRoot 'docker-compose.production.yml'
+    & $dockerCommand.Source compose -f $composeFile ps chrome
+    if ($LASTEXITCODE -ne 0) {
+        throw 'Docker Chrome 상태를 확인하지 못했습니다.'
+    }
+    $health = Get-ApiHealth
+    if ($null -eq $health) {
+        Write-Host 'API health: 응답 없음'
+    }
+    else {
+        Write-Host ("API health: {0}, Chrome readiness: {1}" -f $health.status, $health.browser)
+    }
+    return
+}
 
 function Write-ComponentStatus {
     param(
@@ -58,8 +84,11 @@ Write-Host "API 포트 $ApiPort`: $apiPortStatus"
 Write-Host "Naver Chrome CDP 포트 $ChromeCdpPort`: $(if (Test-LocalPortAvailable -Port $ChromeCdpPort) { '비어 있음' } else { '사용 중' })"
 
 try {
-    $health = Invoke-RestMethod -Uri "http://127.0.0.1:$ApiPort/api/health" -TimeoutSec 3 -ErrorAction Stop
-    Write-Host ("API health: {0}" -f $health.status)
+    $health = Get-ApiHealth
+    if ($null -eq $health) {
+        throw 'health unavailable'
+    }
+    Write-Host ("API health: {0}, Chrome readiness: {1}" -f $health.status, $health.browser)
 }
 catch {
     Write-Host 'API health: 응답 없음'

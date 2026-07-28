@@ -1,0 +1,219 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://wisdom-qj.local/schemas/gpt-reference-v2.json",
+  "title": "Wisdom QJ GPT manual reference",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "captureTool",
+    "mode",
+    "capturedAt",
+    "normalizationVersion",
+    "cases"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "2"
+    },
+    "captureTool": {
+      "const": "gpt_browser_manual"
+    },
+    "mode": {
+      "enum": [
+        "sample",
+        "full"
+      ]
+    },
+    "capturedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "normalizationVersion": {
+      "const": "2"
+    },
+    "cases": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/case"
+      }
+    },
+    "payloadSha256": {
+      "$ref": "#/$defs/sha256"
+    }
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "case": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "caseId",
+        "sourceUrlSha256",
+        "complexId",
+        "complexName",
+        "tradeCounts",
+        "articles"
+      ],
+      "properties": {
+        "caseId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100,
+          "pattern": "^[A-Za-z0-9._-]{1,100}$"
+        },
+        "sourceUrlSha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "complexId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "complexName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "tradeCounts": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "articles": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/article"
+          }
+        }
+      }
+    },
+    "article": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "articleId",
+        "tradeType",
+        "price",
+        "building",
+        "floor",
+        "direction",
+        "supplyAreaM2",
+        "exclusiveAreaM2",
+        "displayedBrokerCount",
+        "optionTags",
+        "moveInDate",
+        "requiredDetailFields"
+      ],
+      "properties": {
+        "articleId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "tradeType": {
+          "enum": [
+            "매매",
+            "전세",
+            "월세"
+          ]
+        },
+        "price": {
+          "type": [
+            "integer",
+            "string",
+            "null"
+          ]
+        },
+        "building": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "floor": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "direction": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "supplyAreaM2": {
+          "type": [
+            "number",
+            "string",
+            "null"
+          ]
+        },
+        "exclusiveAreaM2": {
+          "type": [
+            "number",
+            "string",
+            "null"
+          ]
+        },
+        "displayedBrokerCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "optionTags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "moveInDate": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "requiredDetailFields": {
+          "type": "object",
+          "propertyNames": {
+            "enum": [
+              "provider",
+              "is_npay",
+              "advertised_price",
+              "price_per_3_3m2",
+              "management_fee",
+              "loan_description",
+              "supply_area_m2",
+              "exclusive_area_m2",
+              "exclusive_rate",
+              "floor",
+              "room_count",
+              "bathroom_count",
+              "direction",
+              "structure",
+              "verified_at",
+              "first_published_at",
+              "관리 방식",
+              "관리비",
+              "융자",
+              "방수",
+              "욕실수",
+              "구조",
+              "매물 확인일",
+              "최초 등록일"
+            ]
+          },
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}

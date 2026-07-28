@@ -23,7 +23,13 @@ Set-ExecutionPolicy -Scope Process Bypass
 .\scripts\setup-local.ps1
 ```
 
-이 스크립트는 Python 3.12~3.14와 Node.js 22를 확인한 뒤 `.venv` 생성, Python Playwright를 포함한 백엔드 패키지 설치, npm 패키지 설치, `backend/data` 준비와 SQLite 마이그레이션을 순서대로 수행한다. 로컬 수집은 설치된 Google Chrome을 사용하므로 Playwright 전용 Chromium 바이너리는 설치하지 않는다. Python, Node.js, Google Chrome 자체도 자동 설치하지 않는다.
+이 스크립트는 Python 3.12~3.14와 Node.js 22를 확인한 뒤 `.venv` 생성, Python Playwright를 포함한 백엔드 패키지 설치, npm 패키지 설치, `backend/data` 준비와 SQLite 마이그레이션을 순서대로 수행한다. 최초 관리자 설정에 필요한 무작위 bootstrap token도 `backend/data/bootstrap-token.txt`에 한 번 생성하고 이후 실행에서 같은 값을 재사용한다. 이 파일은 Git에서 제외되며 비밀번호처럼 취급한다. 로컬 수집은 설치된 Google Chrome을 사용하므로 Playwright 전용 Chromium 바이너리는 설치하지 않는다. Python, Node.js, Google Chrome 자체도 자동 설치하지 않는다.
+
+최초 관리자 화면에서 요구하는 token은 다음 명령으로 확인한다.
+
+```powershell
+Get-Content -LiteralPath .\backend\data\bootstrap-token.txt
+```
 
 ### 3. 시작·상태·종료
 
@@ -36,8 +42,8 @@ Set-ExecutionPolicy -Scope Process Bypass
 - `start.ps1 -Mode local`은 API보다 먼저 일반 Google Chrome을 전용 프로필로 실행한다.
 - Chrome CDP는 `127.0.0.1:42973`에만 열리며 외부 주소에서는 접근할 수 없다.
 - 전용 프로필은 `backend/data/naver-chrome-profile`에 저장한다. 사용자의 기본 Chrome 프로필·쿠키·로그인 상태를 읽지 않는다.
-- 일반 Chrome 창이 화면에 보이는 것이 정상이다. 수집기는 이 창의 기본 context에 새 탭을 만들고, 수집이 끝나면 자신이 만든 탭과 CDP 연결만 닫는다.
-- `status.ps1`은 포탈/API와 함께 전용 Chrome의 PID, 포트, 프로필 소유권을 확인한다.
+- 일반 Chrome 창이 화면에 보이는 것이 정상이다. 수집기는 이 창의 기본 context에 새 탭을 만들고, 수집이 끝나면 자신이 만든 탭만 닫는다.
+- `status.ps1`은 포탈/API와 함께 전용 Chrome의 PID, 포트, 프로필 소유권 및 API가 보고한 Chrome readiness를 확인한다.
 - `stop-local.ps1`은 저장소가 시작한 전용 Chrome임을 확인한 경우에만 종료한다.
 
 - 포탈: `http://127.0.0.1:42880`
@@ -52,6 +58,8 @@ API와 포탈을 각각 보면서 실행해야 할 때만 이 방식을 사용�
 
 ```powershell
 Copy-Item .\backend\.env.local.example .\backend\.env
+. .\scripts\runtime-common.ps1
+Set-LocalRuntimeEnvironment
 .\scripts\start-naver-browser.ps1
 ```
 
@@ -70,7 +78,7 @@ Set-Location .\frontend
 npm run dev -- --host 127.0.0.1 --port 42880 --strictPort
 ```
 
-수동 실행에서도 `backend/.env`의 `APP_RUNTIME=local`, SQLite URL, `CRAWLER_BROWSER_MODE=external_chrome`, CDP `42973`을 유지한다. Docker로 전환할 때는 `backend/.env.example`을 다시 복사하여 Docker 설정으로 교체한다.
+수동 실행에서도 `backend/.env`의 `APP_RUNTIME=local`, SQLite URL, `CRAWLER_CDP_URL=http://127.0.0.1:42973`을 유지한다. `APP_RUNTIME`이 유일한 런타임 선택자다. Docker로 전환할 때는 `backend/.env.example`을 다시 복사하여 Docker 설정으로 교체한다.
 
 ### 5. Chrome만 별도로 시작
 
@@ -91,6 +99,8 @@ Chrome 136 이상은 기본 프로필에 대한 원격 디버깅을 제한하므
 
 `stop-local.ps1`은 기록된 PID와 명령행에 현재 저장소 경로가 모두 확인된 프로세스만 종료한다. SQLite 파일과 로그는 삭제하지 않는다.
 
+전용 프로필에는 cookie와 로그인 세션이 포함될 수 있으므로 민감 데이터로 취급한다. 장애 복구 시 먼저 전용 Chrome만 정상 종료·재시작하고 `status.ps1`의 Chrome readiness를 확인한다. 프로필 삭제·초기화·복원은 자동 복구 수단이 아니며 반드시 별도 승인을 받는다. `browser_unavailable`은 시작 전 연결 실패, `browser_disconnected`는 조사 중 연결 종료를 뜻하며 자동 재개하지 않는다.
+
 ### 7. 로컬 모드 제한
 
 로컬 모드는 개인 개발·데모용이며 Uvicorn worker와 크롤링 동시 실행 수를 각각 1개로 제한한다. 여러 사용자, 여러 서버 또는 장시간 운영에는 Docker 모드를 사용한다. 실제 조사 시 네이버 이용약관, robots 정책과 접근 제한을 준수하고 CAPTCHA나 로그인 제한을 우회하지 않는다.
@@ -107,11 +117,13 @@ Chrome 136 이상은 기본 프로필에 대한 원격 디버깅을 제한하므
 
 # AI Local Runtime Contract (English)
 
-Prerequisites are Windows PowerShell, Python `>=3.12,<3.15`, Node.js 22 LTS, and Google Chrome. `setup-local.ps1` validates the Python and Node versions, creates `.venv`, installs the Python Playwright package and frontend dependencies, and migrates the SQLite database. It does not install Python, Node, Chrome, or a Playwright-owned Chromium binary.
+Prerequisites are Windows PowerShell, Python `>=3.12,<3.15`, Node.js 22 LTS, and Google Chrome. `setup-local.ps1` validates the Python and Node versions, creates `.venv`, installs the Python Playwright package and frontend dependencies, migrates the SQLite database, and generates a reusable 256-bit bootstrap token at `backend/data/bootstrap-token.txt`. The ignored token file is secret material. Read it only when completing the first-admin form. It does not install Python, Node, Chrome, or a Playwright-owned Chromium binary.
 
 Run `start.ps1 -Mode local`, inspect with `status.ps1`, and stop with `stop-local.ps1`. Local startup first launches ordinary Chrome with a dedicated profile at `backend/data/naver-chrome-profile` and loopback-only CDP `127.0.0.1:42973`; it never reuses the user's default profile. Use `start-naver-browser.ps1` when only the crawler Chrome is required. The portal/API ports are `42880/42881`. Local state is stored in `backend/data/wisdom_local.db`; process metadata and logs are stored under `temp/local-runtime/`. Never stop a PID unless its command line identifies this repository and the expected component. Local mode is single-process with crawl concurrency one.
 
-For manual startup, copy `backend/.env.local.example` to `backend/.env`, start the dedicated Chrome, run Alembic and one-worker Uvicorn from `backend`, and run Vite from `frontend`. Restore `backend/.env.example` before switching to Docker mode.
+For manual startup, copy `backend/.env.local.example` to `backend/.env`, dot-source `scripts/runtime-common.ps1`, call `Set-LocalRuntimeEnvironment` so the generated bootstrap token is exported, start the dedicated Chrome, run Alembic and one-worker Uvicorn from `backend`, and run Vite from `frontend`. Restore `backend/.env.example` before switching to Docker mode.
+
+`APP_RUNTIME=local` is the sole runtime selector and constrains `CRAWLER_CDP_URL` to `http://127.0.0.1:42973`. The crawler closes only tabs it created. Treat the dedicated profile as sensitive persistent session data; never reset, delete, or restore it without separate approval. `browser_unavailable` means pre-connection failure, while `browser_disconnected` means a terminal mid-run disconnect with no automatic resume.
 
 ## Naver Collection Contract
 

@@ -10,14 +10,21 @@ import {
   scheduleKeys,
 } from '../api/schedules'
 import {
+  getNotificationPreference,
+  notificationKeys,
+  patchNotificationPreference,
+} from '../api/notifications'
+import {
   InteractionDelaySelector,
   interactionDelayPresetText,
 } from '../components/analysis/InteractionDelaySelector'
 import { useAnalysis } from '../state/AnalysisProvider'
 import { useDemoAnalysis } from '../state/DemoAnalysisContext'
 import type { ScheduleCadence } from '../types/api'
+import type { NotificationPreferencePatchApi } from '../types/api'
 import type { ScheduleDraft } from '../types/realEstate'
 import { formatCollectedAt } from '../utils/formatters'
+import { runErrorMessage } from '../utils/runErrorMessages'
 
 const cadenceLabels: Record<ScheduleCadence, string> = {
   daily: '매일',
@@ -39,20 +46,32 @@ function errorText(error: unknown): string {
   return error instanceof Error ? error.message : '스케줄 요청을 처리하지 못했습니다.'
 }
 
+const DEFAULT_SCHEDULE_DRAFT: ScheduleDraft = {
+  enabled: true,
+  cadence: 'daily',
+  time: '09:00',
+  notifyOnChange: true,
+  collectBrokerDetails: true,
+  interactionDelayPreset: 'normal',
+}
+
+const DEFAULT_NOTIFICATION_DRAFT: NotificationPreferencePatchApi = {
+  enabled: false,
+  notifyNew: true,
+  notifyChanged: true,
+  notifyRemoved: true,
+  notifyRestored: true,
+}
+
 export function SchedulePage() {
   const queryClient = useQueryClient()
   const analysis = useAnalysis()
   const demo = useDemoAnalysis()
   const selectedSource = analysis.selectedApartment
-  const [draft, setDraft] = useState<ScheduleDraft>({
-    enabled: true,
-    cadence: 'daily',
-    time: '09:00',
-    notifyOnChange: true,
-    collectBrokerDetails: true,
-    interactionDelayPreset: 'normal',
-  })
+  const [draft, setDraft] = useState<ScheduleDraft>(DEFAULT_SCHEDULE_DRAFT)
   const [demoSaved, setDemoSaved] = useState(false)
+  const [notificationDraft, setNotificationDraft] =
+    useState<NotificationPreferencePatchApi>(DEFAULT_NOTIFICATION_DRAFT)
 
   const schedulesQuery = useQuery({
     queryKey: scheduleKeys.all,
@@ -60,11 +79,22 @@ export function SchedulePage() {
     enabled: !analysis.isDemo,
   })
   const currentSchedule = schedulesQuery.data?.find((item) => item.sourceId === selectedSource?.sourceId)
+  const preferenceQuery = useQuery({
+    queryKey: notificationKeys.preference(selectedSource?.sourceId ?? ''),
+    queryFn: () => getNotificationPreference(selectedSource!.sourceId),
+    enabled: !analysis.isDemo && Boolean(selectedSource?.sourceId),
+  })
   const runsQuery = useQuery({
     queryKey: scheduleKeys.runs(currentSchedule?.id ?? ''),
     queryFn: () => getScheduleRuns(currentSchedule!.id),
     enabled: !analysis.isDemo && Boolean(currentSchedule?.id),
   })
+
+  useEffect(() => {
+    if (analysis.isDemo) return
+    setDraft({ ...DEFAULT_SCHEDULE_DRAFT })
+    setNotificationDraft({ ...DEFAULT_NOTIFICATION_DRAFT })
+  }, [analysis.isDemo, selectedSource?.sourceId])
 
   useEffect(() => {
     if (!currentSchedule) return
@@ -78,6 +108,17 @@ export function SchedulePage() {
     }))
   }, [currentSchedule])
 
+  useEffect(() => {
+    if (!preferenceQuery.data) return
+    setNotificationDraft({
+      enabled: preferenceQuery.data.enabled,
+      notifyNew: preferenceQuery.data.notifyNew,
+      notifyChanged: preferenceQuery.data.notifyChanged,
+      notifyRemoved: preferenceQuery.data.notifyRemoved,
+      notifyRestored: preferenceQuery.data.notifyRestored,
+    })
+  }, [preferenceQuery.data])
+
   const saveMutation = useMutation({
     mutationFn: async () => {
       const payload = {
@@ -89,13 +130,27 @@ export function SchedulePage() {
         collectBrokerDetails: draft.collectBrokerDetails,
         interactionDelayPreset: draft.interactionDelayPreset,
       }
-      if (currentSchedule) return patchSchedule(currentSchedule.id, payload)
       if (!selectedSource) throw new Error('먼저 URL 조사를 완료해 주세요.')
-      return createSchedule({ ...payload, sourceId: selectedSource.sourceId })
+      if (
+        !preferenceQuery.data
+        || preferenceQuery.data.sourceId !== selectedSource.sourceId
+      ) {
+        throw new Error('선택한 아파트의 알림 설정을 불러오는 중입니다.')
+      }
+      const saved = currentSchedule
+        ? await patchSchedule(currentSchedule.id, payload)
+        : await createSchedule({ ...payload, sourceId: selectedSource.sourceId })
+      await patchNotificationPreference(selectedSource.sourceId, notificationDraft)
+      return saved
     },
     onSuccess: async (saved) => {
       await queryClient.invalidateQueries({ queryKey: scheduleKeys.all })
       await queryClient.invalidateQueries({ queryKey: scheduleKeys.runs(saved.id) })
+      if (selectedSource) {
+        await queryClient.invalidateQueries({
+          queryKey: notificationKeys.preference(selectedSource.sourceId),
+        })
+      }
     },
   })
   const removeMutation = useMutation({
@@ -116,8 +171,14 @@ export function SchedulePage() {
   }
 
   const sourceUrl = analysis.isDemo ? demo.dataset?.sourceUrl : selectedSource?.sourceUrl
+  const sourceSettingsReady = analysis.isDemo || (
+    Boolean(selectedSource)
+    && schedulesQuery.isSuccess
+    && preferenceQuery.isSuccess
+    && preferenceQuery.data?.sourceId === selectedSource?.sourceId
+  )
   const pending = saveMutation.isPending || removeMutation.isPending
-  const requestError = saveMutation.error ?? removeMutation.error ?? schedulesQuery.error ?? runsQuery.error
+  const requestError = saveMutation.error ?? removeMutation.error ?? schedulesQuery.error ?? runsQuery.error ?? preferenceQuery.error
   const hasDisplaySchedule = analysis.isDemo || Boolean(currentSchedule)
   const displayEnabled = analysis.isDemo ? draft.enabled : Boolean(currentSchedule?.enabled)
   const displayCadence = analysis.isDemo ? draft.cadence : currentSchedule?.cadence
@@ -178,13 +239,54 @@ export function SchedulePage() {
               <label className="text-sm font-extrabold text-slate-700" htmlFor="schedule-time">조사 시작 시각</label>
               <input id="schedule-time" type="time" value={draft.time} onChange={(event) => setDraft((current) => ({ ...current, time: event.target.value }))} className="mt-2 h-12 w-full rounded-xl border border-slate-300 px-4 text-sm font-bold outline-none focus:border-emerald-500 focus:ring-4 focus:ring-emerald-100" />
             </div>
-            <label className={`flex items-center justify-between gap-4 rounded-2xl border border-slate-200 p-4 ${analysis.isDemo ? 'cursor-pointer' : 'opacity-60'}`}>
-              <span><strong className="block text-sm text-slate-800">변경 발생 알림</strong><small className="mt-1 block text-xs text-slate-400">{analysis.isDemo ? '신규·가격 변경·삭제 매물이 있을 때 알립니다.' : '현재 서버 API에는 알림 설정이 포함되어 있지 않습니다.'}</small></span>
-              <input type="checkbox" disabled={!analysis.isDemo} checked={analysis.isDemo && draft.notifyOnChange} onChange={(event) => setDraft((current) => ({ ...current, notifyOnChange: event.target.checked }))} className="size-5 accent-emerald-600" />
-            </label>
+            <fieldset className="rounded-2xl border border-slate-200 p-4">
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <legend className="text-sm font-extrabold text-slate-800">변경 발생 알림</legend>
+                  <p className="mt-1 text-xs text-slate-400">선택한 변경 유형을 인앱 알림으로 받습니다.</p>
+                </div>
+                <input
+                  type="checkbox"
+                  aria-label="변경 발생 알림 사용"
+                  checked={analysis.isDemo ? draft.notifyOnChange : notificationDraft.enabled}
+                  onChange={(event) => {
+                    if (analysis.isDemo) {
+                      setDraft((current) => ({ ...current, notifyOnChange: event.target.checked }))
+                    } else {
+                      setNotificationDraft((current) => ({ ...current, enabled: event.target.checked }))
+                    }
+                  }}
+                  className="size-5 accent-emerald-600"
+                />
+              </div>
+              {!analysis.isDemo ? (
+                <div className="mt-4 grid grid-cols-2 gap-2 text-xs font-bold text-slate-600 sm:grid-cols-4">
+                  {([
+                    ['notifyNew', '신규'],
+                    ['notifyChanged', '변경'],
+                    ['notifyRemoved', '삭제'],
+                    ['notifyRestored', '복원'],
+                  ] as const).map(([field, label]) => (
+                    <label key={field} className="flex items-center gap-2 rounded-lg bg-slate-50 px-3 py-2">
+                      <input
+                        type="checkbox"
+                        checked={notificationDraft[field]}
+                        disabled={!notificationDraft.enabled}
+                        onChange={(event) => setNotificationDraft((current) => ({
+                          ...current,
+                          [field]: event.target.checked,
+                        }))}
+                        className="size-4 accent-emerald-600"
+                      />
+                      {label}
+                    </label>
+                  ))}
+                </div>
+              ) : null}
+            </fieldset>
           </div>
 
-          <button type="submit" disabled={pending || (!analysis.isDemo && !selectedSource)} className="mt-7 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-slate-950 px-5 py-3.5 text-sm font-extrabold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-slate-400">{demoSaved || saveMutation.isSuccess ? <><Check size={17} /> 저장되었습니다</> : pending ? '처리 중...' : '스케줄 저장'}</button>
+          <button type="submit" disabled={pending || !sourceSettingsReady} className="mt-7 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-slate-950 px-5 py-3.5 text-sm font-extrabold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-slate-400">{demoSaved || saveMutation.isSuccess ? <><Check size={17} /> 저장되었습니다</> : pending ? '처리 중...' : '스케줄 저장'}</button>
           {!analysis.isDemo && currentSchedule ? <button type="button" disabled={pending} onClick={() => removeMutation.mutate()} className="mt-2 inline-flex w-full items-center justify-center gap-2 rounded-xl border border-rose-200 px-5 py-3 text-sm font-extrabold text-rose-700 hover:bg-rose-50 disabled:opacity-50"><Trash2 size={16} /> {currentSchedule.enabled ? '스케줄 비활성화' : '스케줄 삭제'}</button> : null}
         </form>
 
@@ -201,7 +303,8 @@ export function SchedulePage() {
                 const date = run.finishedAt ?? run.startedAt ?? run.createdAt
                 const successful = run.status === 'completed'
                 const partial = run.status === 'partial'
-                return <article key={run.runId} className="flex items-center gap-3 py-4"><span className={`grid size-9 place-items-center rounded-full ${successful ? 'bg-emerald-50 text-emerald-700' : partial ? 'bg-amber-50 text-amber-700' : 'bg-rose-50 text-rose-700'}`}><PlayCircle size={17} /></span><div className="min-w-0 flex-1"><p className="text-sm font-extrabold text-slate-800">{formatCollectedAt(date)} · {runStatusLabels[run.status] ?? run.status}</p><p className="mt-1 text-xs text-slate-400">{run.collectBrokerDetails ? '추가 상세 수집' : '기본 정보만 수집'} · {interactionDelayPresetText(run.interactionDelayPreset)} · 단계 {run.stage} · 진행률 {run.progress}%{run.errorCode ? ` · ${run.errorCode}` : ''}</p></div><span className={`rounded-full px-2.5 py-1 text-xs font-bold ${successful ? 'bg-emerald-50 text-emerald-700' : partial ? 'bg-amber-50 text-amber-700' : 'bg-rose-50 text-rose-700'}`}>{runStatusLabels[run.status] ?? run.status}</span></article>
+                const errorMessage = runErrorMessage(run.errorCode)
+                return <article key={run.runId} className="flex items-center gap-3 py-4"><span className={`grid size-9 place-items-center rounded-full ${successful ? 'bg-emerald-50 text-emerald-700' : partial ? 'bg-amber-50 text-amber-700' : 'bg-rose-50 text-rose-700'}`}><PlayCircle size={17} /></span><div className="min-w-0 flex-1"><p className="text-sm font-extrabold text-slate-800">{formatCollectedAt(date)} · {runStatusLabels[run.status] ?? run.status}</p><p className="mt-1 text-xs text-slate-400">{run.collectBrokerDetails ? '추가 상세 수집' : '기본 정보만 수집'} · {interactionDelayPresetText(run.interactionDelayPreset)} · 단계 {run.stage} · 진행률 {run.progress}%{errorMessage ? ` · ${errorMessage}` : ''}</p></div><span className={`rounded-full px-2.5 py-1 text-xs font-bold ${successful ? 'bg-emerald-50 text-emerald-700' : partial ? 'bg-amber-50 text-amber-700' : 'bg-rose-50 text-rose-700'}`}>{runStatusLabels[run.status] ?? run.status}</span></article>
               }) : <p className="py-6 text-center text-sm font-bold text-slate-400">최근 실행 이력이 없습니다.</p>}
             </div>
           </section>

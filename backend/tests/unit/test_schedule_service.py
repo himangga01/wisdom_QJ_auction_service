@@ -4,6 +4,7 @@ from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 import app.services.schedule_service as schedule_module
+import app.services.schedule_runner_service as runner_module
 from app.models import CrawlRun, CrawlSchedule, TrackedSource
 from app.schemas.schedule import ScheduleCreate, SchedulePatch
 from app.services.schedule_service import (
@@ -11,6 +12,7 @@ from app.services.schedule_service import (
     calculate_next_run,
     enqueue_with_source_lock,
 )
+from app.services.schedule_runner_service import ScheduleRunnerService
 
 SEOUL = ZoneInfo("Asia/Seoul")
 
@@ -82,11 +84,19 @@ class ScheduleSession:
         return None
 
     async def scalar(self, _statement):
+        entity = _statement.column_descriptions[0].get("entity")
+        if entity is TrackedSource:
+            return self.source
+        if entity is CrawlSchedule:
+            return self.schedule
         return None
 
     def add(self, instance) -> None:
         instance.id = instance.id or uuid4()
-        self.schedule = instance
+        if isinstance(instance, CrawlRun):
+            self.runs.append(instance)
+        else:
+            self.schedule = instance
 
     async def commit(self) -> None:
         return None
@@ -107,6 +117,7 @@ def _source() -> TrackedSource:
         source_url="https://fin.land.naver.com/map?a=1",
         normalized_url="https://fin.land.naver.com/map?a=1",
         url_hash="a" * 64,
+        owner_user_id=uuid4(),
         is_active=True,
     )
 
@@ -114,7 +125,7 @@ def _source() -> TrackedSource:
 def test_schedule_create_patch_and_history_preserve_collection_option() -> None:
     source = _source()
     session = ScheduleSession(source)
-    service = ScheduleService(session)
+    service = ScheduleService(session, source.owner_user_id)
     default_schedule = ScheduleCreate(
         sourceId=source.id,
         cadence="daily",
@@ -193,9 +204,9 @@ def test_due_enqueue_passes_schedule_collection_option(monkeypatch) -> None:
         def __init__(self, _session, _dispatcher) -> None:
             pass
 
-        async def create(
+        async def create_for_source(
             self,
-            _url,
+            _source_id,
             *,
             collect_broker_details=True,
             interaction_delay_preset="normal",
@@ -205,10 +216,10 @@ def test_due_enqueue_passes_schedule_collection_option(monkeypatch) -> None:
             )
             return object(), True
 
-    monkeypatch.setattr(schedule_module, "AnalysisService", FakeAnalysisService)
+    monkeypatch.setattr(runner_module, "AnalysisService", FakeAnalysisService)
     session = ScheduleSession(source, schedule=schedule, due_rows=[(schedule, source)])
     counts = asyncio.run(
-        ScheduleService(session).enqueue_due(
+        ScheduleRunnerService(session).enqueue_due(
             lock_manager=GrantedLockManager(),
             dispatcher=object(),
             now=datetime(2026, 7, 28, 1, 0, tzinfo=timezone.utc),
@@ -217,3 +228,89 @@ def test_due_enqueue_passes_schedule_collection_option(monkeypatch) -> None:
 
     assert counts["enqueued"] == 1
     assert captured == [(False, "very_careful")]
+
+
+def test_due_schedule_records_browser_unavailable_without_dispatching() -> None:
+    source = _source()
+    schedule = CrawlSchedule(
+        id=uuid4(),
+        source_id=source.id,
+        cadence="daily",
+        time_of_day=time(9),
+        timezone="Asia/Seoul",
+        weekday=None,
+        enabled=True,
+        collect_broker_details=True,
+        interaction_delay_preset="normal",
+        next_run_at=datetime(2026, 7, 28, 0, 0, tzinfo=timezone.utc),
+    )
+
+    class NoDispatch:
+        def enqueue(self, _run_id) -> None:
+            raise AssertionError("unavailable browser must not dispatch")
+
+    session = ScheduleSession(source, schedule=schedule, due_rows=[(schedule, source)])
+    counts = asyncio.run(
+        ScheduleRunnerService(session).enqueue_due(
+            lock_manager=GrantedLockManager(),
+            dispatcher=NoDispatch(),
+            browser_status="unavailable",
+            now=datetime(2026, 7, 28, 1, 0, tzinfo=timezone.utc),
+        )
+    )
+
+    assert counts["failed"] == 1
+    assert len(session.runs) == 1
+    assert session.runs[0].status == "failed"
+    assert session.runs[0].error_code == "browser_unavailable"
+    assert session.runs[0].finished_at == datetime(
+        2026, 7, 28, 1, 0, tzinfo=timezone.utc
+    )
+
+
+def test_due_schedule_records_dispatch_failure_and_advances_next_run(
+    monkeypatch,
+) -> None:
+    source = _source()
+    original_next_run = datetime(2026, 7, 28, 0, 0, tzinfo=timezone.utc)
+    schedule = CrawlSchedule(
+        id=uuid4(),
+        source_id=source.id,
+        cadence="daily",
+        time_of_day=time(9),
+        timezone="Asia/Seoul",
+        weekday=None,
+        enabled=True,
+        collect_broker_details=True,
+        interaction_delay_preset="normal",
+        next_run_at=original_next_run,
+    )
+
+    class FailingAnalysisService:
+        def __init__(self, _session, _dispatcher) -> None:
+            pass
+
+        async def create_for_source(self, *_args, **_kwargs):
+            raise RuntimeError("dispatcher unavailable")
+
+    monkeypatch.setattr(
+        runner_module,
+        "AnalysisService",
+        FailingAnalysisService,
+    )
+    session = ScheduleSession(source, schedule=schedule, due_rows=[(schedule, source)])
+
+    counts = asyncio.run(
+        ScheduleRunnerService(session).enqueue_due(
+            lock_manager=GrantedLockManager(),
+            dispatcher=object(),
+            now=datetime(2026, 7, 28, 1, 0, tzinfo=timezone.utc),
+        )
+    )
+
+    assert counts["failed"] == 1
+    assert counts["enqueued"] == 0
+    assert len(session.runs) == 1
+    assert session.runs[0].status == "failed"
+    assert session.runs[0].error_code == "schedule_dispatch_failed"
+    assert schedule.next_run_at > original_next_run

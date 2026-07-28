@@ -1,0 +1,94 @@
+name: Live Naver E2E
+
+on:
+  workflow_dispatch:
+    inputs:
+      caseId:
+        description: Runner-local manifest에 등록된 단일 아파트 case ID
+        required: true
+        type: string
+      includeDetails:
+        description: 중개사 상세정보 수집 여부
+        required: true
+        default: true
+        type: boolean
+      delayProfile:
+        description: 수집 상호작용 지연 preset
+        required: true
+        default: normal
+        type: choice
+        options:
+          - normal
+          - careful
+          - very_careful
+      approvalPhrase:
+        description: 정확히 RUN_ONE_APARTMENT 입력
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: naver-live-e2e-one-apartment
+  cancel-in-progress: false
+
+jobs:
+  live-one-apartment:
+    name: Approved one-apartment live E2E
+    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.approvalPhrase == 'RUN_ONE_APARTMENT' }}
+    environment: naver-live-e2e
+    runs-on:
+      - self-hosted
+      - windows
+      - naver-e2e
+    timeout-minutes: 180
+    env:
+      LIVE_E2E_CASE_ID: ${{ inputs.caseId }}
+      LIVE_E2E_INCLUDE_DETAILS: ${{ inputs.includeDetails }}
+      LIVE_E2E_DELAY_PROFILE: ${{ inputs.delayProfile }}
+      LIVE_E2E_APPROVAL_PHRASE: ${{ inputs.approvalPhrase }}
+      LIVE_E2E_MANIFEST_PATH: ${{ vars.NAVER_E2E_CASE_MANIFEST_PATH }}
+      LIVE_E2E_REFERENCE_PATH: ${{ vars.NAVER_E2E_REFERENCE_PATH }}
+      LIVE_E2E_ARTIFACT_DIR: ${{ runner.temp }}\wisdom-naver-live-e2e\${{ github.run_id }}
+      NAVER_E2E_CDP_URL: http://127.0.0.1:42973
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/pyproject.toml
+
+      - name: Install live E2E dependencies
+        run: |
+          python -m venv .venv
+          .\.venv\Scripts\python -m pip install --upgrade pip
+          .\.venv\Scripts\python -m pip install -e ".\backend[test]"
+
+      - name: Run protected one-apartment live E2E
+        shell: powershell
+        run: |
+          .\scripts\run-live-naver-e2e.ps1 `
+            -CaseId $env:LIVE_E2E_CASE_ID `
+            -IncludeDetails $env:LIVE_E2E_INCLUDE_DETAILS `
+            -DelayProfile $env:LIVE_E2E_DELAY_PROFILE `
+            -ApprovalPhrase $env:LIVE_E2E_APPROVAL_PHRASE `
+            -ManifestPath $env:LIVE_E2E_MANIFEST_PATH `
+            -ReferencePath $env:LIVE_E2E_REFERENCE_PATH `
+            -ArtifactDirectory $env:LIVE_E2E_ARTIFACT_DIR `
+            -CdpUrl $env:NAVER_E2E_CDP_URL
+
+      - name: Upload sanitized live comparison
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: naver-live-e2e-${{ github.run_id }}
+          path: |
+            ${{ env.LIVE_E2E_ARTIFACT_DIR }}\summary.json
+            ${{ env.LIVE_E2E_ARTIFACT_DIR }}\diff.json
+          if-no-files-found: error
+          retention-days: 3

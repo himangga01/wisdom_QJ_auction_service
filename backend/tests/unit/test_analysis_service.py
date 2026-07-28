@@ -10,7 +10,7 @@ from app.services.analysis_service import AnalysisOptionConflictError, AnalysisS
 
 class ConcurrentRequestSession:
     def __init__(self, source: TrackedSource, active_run: CrawlRun) -> None:
-        self.scalar_results = iter([None, source, None, source, active_run])
+        self.scalar_results = iter([None, source, None, active_run])
         self.flush_conflict = True
         self.commit_conflict = True
         self.rollback_count = 0
@@ -47,11 +47,13 @@ class RecordingDispatcher:
 
 
 def test_concurrent_unique_conflicts_return_the_existing_active_run() -> None:
+    actor_user_id = uuid4()
     source = TrackedSource(
         id=uuid4(),
         source_url="https://fin.land.naver.com/map?a=1",
         normalized_url="https://fin.land.naver.com/map?a=1",
         url_hash="a" * 64,
+        owner_user_id=actor_user_id,
     )
     active_run = CrawlRun(
         id=uuid4(),
@@ -66,7 +68,8 @@ def test_concurrent_unique_conflicts_return_the_existing_active_run() -> None:
     dispatcher = RecordingDispatcher()
 
     run, created = asyncio.run(
-        AnalysisService(session, dispatcher).create(
+        AnalysisService(session, dispatcher).create_for_user(
+            actor_user_id,
             "https://fin.land.naver.com/map?a=1"
         )
     )
@@ -100,17 +103,20 @@ class ExistingSourceSession:
 
 
 def test_analysis_option_is_saved_and_active_run_requires_same_option() -> None:
+    actor_user_id = uuid4()
     source = TrackedSource(
         id=uuid4(),
         source_url="https://fin.land.naver.com/map?a=1",
         normalized_url="https://fin.land.naver.com/map?a=1",
         url_hash="a" * 64,
+        owner_user_id=actor_user_id,
     )
     dispatcher = RecordingDispatcher()
     session = ExistingSourceSession(source, None)
 
     run, created = asyncio.run(
-        AnalysisService(session, dispatcher).create(
+        AnalysisService(session, dispatcher).create_for_user(
+            actor_user_id,
             source.source_url,
             collect_broker_details=False,
             interaction_delay_preset="fast",
@@ -135,7 +141,8 @@ def test_analysis_option_is_saved_and_active_run_requires_same_option() -> None:
         AnalysisService(
             ExistingSourceSession(source, active_run),
             dispatcher,
-        ).create(
+        ).create_for_user(
+            actor_user_id,
             source.source_url,
             collect_broker_details=False,
             interaction_delay_preset="fast",
@@ -148,7 +155,8 @@ def test_analysis_option_is_saved_and_active_run_requires_same_option() -> None:
             AnalysisService(
                 ExistingSourceSession(source, active_run),
                 dispatcher,
-            ).create(
+            ).create_for_user(
+                actor_user_id,
                 source.source_url,
                 collect_broker_details=True,
                 interaction_delay_preset="fast",
@@ -160,7 +168,8 @@ def test_analysis_option_is_saved_and_active_run_requires_same_option() -> None:
             AnalysisService(
                 ExistingSourceSession(source, active_run),
                 dispatcher,
-            ).create(
+            ).create_for_user(
+                actor_user_id,
                 source.source_url,
                 collect_broker_details=False,
                 interaction_delay_preset="careful",

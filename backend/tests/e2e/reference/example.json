@@ -1,0 +1,39 @@
+{
+  "schemaVersion": "2",
+  "captureTool": "gpt_browser_manual",
+  "mode": "sample",
+  "capturedAt": "2026-07-29T03:00:00Z",
+  "normalizationVersion": "2",
+  "cases": [
+    {
+      "caseId": "case-example",
+      "sourceUrlSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "complexId": "complex-example",
+      "complexName": "예시 아파트",
+      "tradeCounts": {
+        "매매": 1
+      },
+      "articles": [
+        {
+          "articleId": "article-example",
+          "tradeType": "매매",
+          "price": 720000000,
+          "building": "101동",
+          "floor": "12/25층",
+          "direction": "남향",
+          "supplyAreaM2": "84.12",
+          "exclusiveAreaM2": "59.99",
+          "displayedBrokerCount": 2,
+          "optionTags": [
+            "중문"
+          ],
+          "moveInDate": "협의",
+          "requiredDetailFields": {
+            "관리 방식": "위탁 관리"
+          }
+        }
+      ]
+    }
+  ],
+  "payloadSha256": "34c6fcc08ce6ec16cf06da03e8f76648cd692bfa453b4126b41c899695b290f6"
+}

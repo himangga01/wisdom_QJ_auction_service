@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import type { ApartmentSummary, ListingGroup } from '../../types/realEstate'
 import { formatListingPrice, formatKoreanPrice, tradeTypeLabels } from '../../utils/formatters'
 import { aggregateListingAdditionalInfo } from '../../utils/listingAdditionalInfo'
+import { listingHref } from '../../utils/sourceLinks'
 import { ChangeBadge } from './ChangeBadge'
 
 export type ListingViewMode = 'card' | 'list' | 'table'
@@ -14,8 +15,10 @@ interface SnapshotListingCardsProps {
 }
 
 function detailUrl(apartment: ApartmentSummary, listing: ListingGroup): string {
-  const runQuery = listing.runId ? `?runId=${encodeURIComponent(listing.runId)}` : ''
-  return `/apartments/${apartment.complexId}/listings/${listing.groupId}${runQuery}`
+  return listingHref(apartment.complexId, listing.groupId, {
+    sourceId: apartment.sourceId,
+    runId: listing.runId,
+  })
 }
 
 function registrationCount(listing: ListingGroup): number {

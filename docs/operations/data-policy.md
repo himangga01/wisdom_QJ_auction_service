@@ -132,6 +132,14 @@
 
 승인 근거 문서 자체에 query가 포함된 source URL이나 전화번호를 복사하지 않는다.
 
+### 12. Chrome 전용 프로필 보호
+
+- local `backend/data/naver-chrome-profile`과 Docker `chrome_profile`은 cookie·세션이 포함될 수 있는 민감 운영 데이터다.
+- 사용자 기본 Chrome 프로필과 물리적으로 분리하며 Windows와 Docker 프로필을 서로 공유하지 않는다.
+- 프로필 내용, cookie, CDP WebSocket 주소를 로그·API 응답·artifact·지원 티켓에 기록하지 않는다.
+- 백업, 복원, 초기화, 삭제, 외부 반출은 각각 별도 승인과 접근 통제를 요구한다. 장애 복구를 이유로 자동 삭제하지 않는다.
+- Chrome 장애는 stable code만 기록한다. `browser_unavailable`과 `browser_disconnected`에 원본 예외 문자열이나 endpoint 세부값을 덧붙이지 않는다.
+
 ---
 
 # AI Data Governance Contract (English)
@@ -192,6 +200,8 @@ Use stable error codes, never exception text. Disable application and frontend a
 ## Access and Export Controls
 
 Only the designated pilot operator may query the database or download XLSX. Keep PostgreSQL and Redis private to the Compose network. Use TLS for remote access. Never commit or share `.env`, dumps, or real exports. Production data must not be copied into development fixtures. Exports must be scoped to the selected source and date range, stored locally only as long as needed, and never externally transmitted without separate approval.
+
+Dedicated Chrome profiles are sensitive session stores. Keep the local and Docker profiles physically separate from each other and from the user's default Chrome profile. Never log or return cookies, profile contents, or CDP WebSocket URLs. Backup, restore, reset, deletion, and external transfer each require separate approval.
 
 ## Default Retention Ceilings
 

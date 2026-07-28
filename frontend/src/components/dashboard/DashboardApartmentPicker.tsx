@@ -11,11 +11,16 @@ interface DashboardApartmentPickerProps {
 
 const pageSize = 20
 
+function apartmentIdentity(apartment: ApartmentSummaryApi): string {
+  return `${apartment.sourceId}:${apartment.apartmentId}`
+}
+
 function appendUnique(apartments: ApartmentSummaryApi[], next: ApartmentSummaryApi[]): ApartmentSummaryApi[] {
-  const known = new Set(apartments.map((apartment) => apartment.complexId))
+  const known = new Set(apartments.map(apartmentIdentity))
   return [...apartments, ...next.filter((apartment) => {
-    if (known.has(apartment.complexId)) return false
-    known.add(apartment.complexId)
+    const identity = apartmentIdentity(apartment)
+    if (known.has(identity)) return false
+    known.add(identity)
     return true
   })]
 }
@@ -44,7 +49,9 @@ export function DashboardApartmentPicker({ selectedApartment, onSelect }: Dashbo
 
   const total = apartmentsQuery.data?.total ?? apartments.length
   const hasMore = page * pageSize < total
-  const selectedOutsideResults = selectedApartment && !apartments.some((apartment) => apartment.complexId === selectedApartment.complexId)
+  const selectedOutsideResults = selectedApartment && !apartments.some(
+    (apartment) => apartmentIdentity(apartment) === apartmentIdentity(selectedApartment),
+  )
 
   return (
     <div className="w-full rounded-2xl border border-slate-200 bg-white p-4 shadow-sm lg:w-[360px]">
@@ -72,10 +79,12 @@ export function DashboardApartmentPicker({ selectedApartment, onSelect }: Dashbo
         {apartmentsQuery.isLoading && apartments.length === 0 ? <div className="flex items-center justify-center gap-2 p-4 text-sm font-bold text-slate-500"><LoaderCircle className="animate-spin" size={16} /> 불러오는 중</div> : null}
         {!apartmentsQuery.isLoading && apartments.length === 0 ? <p className="p-4 text-sm font-semibold text-slate-400">검색 결과가 없습니다.</p> : null}
         {apartments.map((apartment) => {
-          const isSelected = apartment.complexId === selectedApartment?.complexId
+          const isSelected = selectedApartment
+            ? apartmentIdentity(apartment) === apartmentIdentity(selectedApartment)
+            : false
           return (
             <button
-              key={apartment.complexId}
+              key={apartmentIdentity(apartment)}
               type="button"
               onClick={() => onSelect(apartment)}
               aria-pressed={isSelected}
@@ -83,6 +92,7 @@ export function DashboardApartmentPicker({ selectedApartment, onSelect }: Dashbo
             >
               <span className="block text-sm font-extrabold text-slate-900">{apartment.complexName}</span>
               <span className="mt-0.5 block truncate text-xs text-slate-500">{apartment.address || '-'}</span>
+              <span className="mt-0.5 block truncate text-[11px] font-semibold text-slate-400">조사 출처 {apartment.sourceId.slice(0, 8)}</span>
             </button>
           )
         })}

@@ -2143,8 +2143,7 @@ class _AssemblyCollector(PlaywrightNaverLandCollector):
         attempted_ids: set[str],
     ) -> None:
         self.settings = SimpleNamespace(
-            crawler_browser_mode="playwright",
-            crawler_headless=True,
+            crawler_cdp_url="http://127.0.0.1:42973",
         )
         self.progress = None
         self.delay = _NoDelay()

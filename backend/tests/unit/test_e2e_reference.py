@@ -50,7 +50,7 @@ def expected_case(
 ) -> GptCaseObservation:
     values: dict[str, object] = {
         "case_id": "case-131197",
-        "source_url": "https://fin.land.naver.com/map?complexId=131197&secret=query",
+        "source_url_sha256": "0" * 64,
         "complex_id": "131197",
         "complex_name": "샘플 아파트",
         "trade_counts": {"매매": 1},
@@ -138,31 +138,32 @@ class ReferenceText:
 
 def reference_text(*, captured_at: str) -> ReferenceText:
     document = {
-        "schema_version": "1",
-        "collector": "gpt_browser_exploration",
+        "schemaVersion": "2",
+        "captureTool": "gpt_browser_manual",
         "mode": "sample",
-        "captured_at": captured_at,
+        "capturedAt": captured_at,
+        "normalizationVersion": "2",
         "cases": [
             {
-                "case_id": "case-131197",
-                "source_url": "https://fin.land.naver.com/map?complexId=131197",
-                "complex_id": "131197",
-                "complex_name": "샘플 아파트",
-                "trade_counts": {"매매": 1},
+                "caseId": "case-131197",
+                "sourceUrlSha256": "0" * 64,
+                "complexId": "131197",
+                "complexName": "샘플 아파트",
+                "tradeCounts": {"매매": 1},
                 "articles": [
                     {
-                        "article_id": "article-1",
-                        "trade_type": "매매",
+                        "articleId": "article-1",
+                        "tradeType": "매매",
                         "price": 720_000_000,
                         "building": "107동",
                         "floor": "12 / 25층",
                         "direction": "남향",
-                        "supply_area_m2": "84.12",
-                        "exclusive_area_m2": "59.99",
-                        "displayed_broker_count": 2,
-                        "option_tags": ["중문"],
-                        "move_in_date": "2026년 8월 협의",
-                        "required_detail_fields": {"관리 방식": "위탁 관리"},
+                        "supplyAreaM2": "84.12",
+                        "exclusiveAreaM2": "59.99",
+                        "displayedBrokerCount": 2,
+                        "optionTags": ["중문"],
+                        "moveInDate": "2026년 8월 협의",
+                        "requiredDetailFields": {"관리 방식": "위탁 관리"},
                     }
                 ],
             }

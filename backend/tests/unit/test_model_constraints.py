@@ -32,11 +32,16 @@ def test_required_tables_are_registered() -> None:
         "market_detail_snapshots",
         "change_events",
         "crawl_schedules",
+        "source_listing_states",
     }.issubset(Base.metadata.tables)
 
 
 def test_identity_and_snapshot_uniqueness_constraints() -> None:
-    assert ("url_hash",) in _unique_column_sets("tracked_sources")
+    assert ("url_hash",) not in _unique_column_sets("tracked_sources")
+    assert ("owner_user_id", "url_hash") in _unique_column_sets("tracked_sources")
+    assert ("source_id", "listing_group_id") in _unique_column_sets(
+        "source_listing_states"
+    )
     assert ("naver_complex_id",) in _unique_column_sets("apartments")
     assert ("naver_article_id",) in _unique_column_sets("broker_articles")
     assert ("run_id", "listing_group_id") in _unique_column_sets(

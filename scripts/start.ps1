@@ -67,3 +67,4 @@ Invoke-CheckedCommand `
 Write-Host ''
 Write-Host "포탈: http://127.0.0.1:$PortalPort"
 Write-Host "API:  http://127.0.0.1:$ApiPort"
+& (Join-Path $PSScriptRoot 'status.ps1') -Mode docker

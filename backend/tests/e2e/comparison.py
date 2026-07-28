@@ -12,7 +12,7 @@ from app.crawler.types import (
     CrawlPayload,
     ListingDetail,
 )
-from tests.e2e.reference_schema import GptCaseObservation
+from tests.e2e.reference_loader import GptCaseObservation
 
 
 AREA_QUANTUM = Decimal("0.01")

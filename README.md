@@ -13,7 +13,7 @@ Python 3.12~3.14, Node.js 22 LTS, Google Chrome을 설치한 뒤 PowerShell에�
 .\scripts\start.ps1 -Mode local
 ```
 
-`setup-local.ps1`은 Python 3.12~3.14와 Node.js 22를 확인하고 의존성을 설치한다. 수집 브라우저는 설치된 Google Chrome을 사용하므로 별도 Playwright Chromium 바이너리는 설치하지 않는다.
+`setup-local.ps1`은 Python 3.12~3.14와 Node.js 22를 확인하고 의존성을 설치한다. 최초 관리자 설정용 무작위 token은 `backend/data/bootstrap-token.txt`에 생성되며, 관리자 설정 화면에서 `Get-Content .\backend\data\bootstrap-token.txt`로 확인한다. 수집 브라우저는 설치된 Google Chrome을 사용하므로 별도 Playwright Chromium 바이너리는 설치하지 않는다.
 
 로컬 모드는 `backend/data/wisdom_local.db` SQLite 파일과 단일 백그라운드 작업 실행기를 사용한다. 시작할 때 일반 Chrome을 전용 프로필과 loopback CDP 포트 `42973`으로 자동 실행한다. 사용자 기본 Chrome 프로필은 읽지 않는다. 상태 확인과 종료 명령은 다음과 같다.
 
@@ -30,6 +30,8 @@ Python 3.12~3.14, Node.js 22 LTS, Google Chrome을 설치한 뒤 PowerShell에�
 
 ```powershell
 Copy-Item .\backend\.env.local.example .\backend\.env
+. .\scripts\runtime-common.ps1
+Set-LocalRuntimeEnvironment
 .\scripts\start-naver-browser.ps1
 ```
 
@@ -44,7 +46,9 @@ Copy-Item .\backend\.env.example .\backend\.env
 .\scripts\start.ps1 -Mode docker
 ```
 
-전체 서비스의 공식 구성은 저장소 루트의 `docker-compose.production.yml`이다. 시작 스크립트는 `backend/.env`를 Compose 변수 치환과 컨테이너 환경변수에 함께 사용한다.
+실행 전에 `backend/.env`의 공개 예시 `AUTH_BOOTSTRAP_TOKEN`을 32바이트 이상 무작위 값으로 반드시 교체한다. 전체 서비스의 공식 구성은 저장소 루트의 `docker-compose.production.yml`이다. 시작 스크립트는 `backend/.env`를 Compose 변수 치환과 컨테이너 환경변수에 함께 사용한다.
+
+Docker에서도 Backend가 브라우저를 직접 실행하지 않는다. 비 root Chrome/Xvfb sidecar가 영속 `chrome_profile` 볼륨을 사용하고, API와 worker는 Compose 내부 주소 `http://chrome:9222`에 CDP로 연결한다. `9222`는 호스트에 공개하지 않는다.
 
 자세한 내용: [Docker 설치·실행 가이드](docs/setup/docker-setup.md)
 
@@ -84,13 +88,17 @@ This repository supports two explicit runtime modes while preserving the same fr
 
 - `local`: `APP_RUNTIME=local`, SQLite at `backend/data/wisdom_local.db`, one Uvicorn worker, one in-process crawl executor and scheduler.
 - `docker`: `APP_RUNTIME=docker`, PostgreSQL, Redis, Celery worker/beat, FastAPI and Nginx through Docker Compose.
-- Local collection defaults to `CRAWLER_BROWSER_MODE=external_chrome` and attaches to an ordinary Google Chrome at `http://127.0.0.1:42973`, launched with the dedicated `backend/data/naver-chrome-profile`.
-- Docker retains the Playwright-owned browser fallback. No stealth, fingerprint alteration, CAPTCHA solver, proxy rotation, or direct Naver data API is used.
+- `APP_RUNTIME` is the only runtime selector. Local attaches to `http://127.0.0.1:42973`; Docker attaches to `http://chrome:9222`.
+- Both modes use `playwright.chromium.connect_over_cdp()` only. There is no Playwright-owned browser launch fallback.
+- Docker runs a non-root Chrome/Xvfb sidecar with the persistent `chrome_profile` volume. CDP port `9222` is internal-only and is never published to the host.
+- No stealth, fingerprint alteration, CAPTCHA solver, proxy rotation, or direct Naver data API is used.
 - Host ports are fixed to frontend `42880` and API `42881`. Docker-internal ports remain `80` and `8000`.
 - Use `scripts/setup-local.ps1` once, then `scripts/start.ps1 -Mode local`; use `scripts/stop-local.ps1` only for local processes.
-- For manual local startup, copy `backend/.env.local.example` to `backend/.env`, start the dedicated Chrome, then run Alembic, Uvicorn, and Vite separately.
+- Local setup generates the first-admin secret at `backend/data/bootstrap-token.txt`; treat it as a password and enter it only in the bootstrap form.
+- For manual local startup, copy `backend/.env.local.example` to `backend/.env`, dot-source `scripts/runtime-common.ps1`, call `Set-LocalRuntimeEnvironment`, start the dedicated Chrome, then run Alembic, Uvicorn, and Vite separately.
 - Local setup validates Node.js 22 and uses the installed Google Chrome without installing a Playwright-owned Chromium binary.
 - The canonical full-service Docker file is `docker-compose.production.yml`; `start.ps1` passes `backend/.env` through Compose `--env-file`.
+- Docker startup requires replacing the rejected example `AUTH_BOOTSTRAP_TOKEN` with a cryptographically random value of at least 32 bytes.
 - Docker setup never installs Docker automatically and never deletes volumes.
 
 ## Naver Collection Contract

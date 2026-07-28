@@ -25,6 +25,16 @@ export class ApiError extends Error {
   }
 }
 
+type UnauthorizedHandler = (error: ApiError) => void
+
+let unauthorizedHandler: UnauthorizedHandler | null = null
+
+export function registerUnauthorizedHandler(
+  handler: UnauthorizedHandler | null,
+): void {
+  unauthorizedHandler = handler
+}
+
 const configuredBaseUrl = import.meta.env.VITE_API_BASE_URL?.trim() || '/api'
 export const API_BASE_URL = configuredBaseUrl.replace(/\/$/, '')
 
@@ -59,7 +69,25 @@ async function throwApiError(response: Response): Promise<never> {
   }
   const fallback = `요청을 처리하지 못했습니다. (${response.status})`
   const parsed = errorMessage(payload, fallback)
-  throw new ApiError(parsed.message, response.status, parsed.code, payload)
+  const error = new ApiError(parsed.message, response.status, parsed.code, payload)
+  if (response.status === 401) unauthorizedHandler?.(error)
+  throw error
+}
+
+function getCookie(name: string): string | null {
+  if (typeof document === 'undefined') return null
+  const prefix = `${encodeURIComponent(name)}=`
+  const value = document.cookie
+    .split(';')
+    .map((part) => part.trim())
+    .find((part) => part.startsWith(prefix))
+    ?.slice(prefix.length)
+  if (value === undefined) return null
+  try {
+    return decodeURIComponent(value)
+  } catch {
+    return value
+  }
 }
 
 export async function apiRequest<T>(
@@ -68,10 +96,19 @@ export async function apiRequest<T>(
   params?: Record<string, string | number | boolean | null | undefined>,
 ): Promise<T> {
   const headers = new Headers(init.headers)
+  const method = (init.method ?? 'GET').toUpperCase()
   if (init.body !== undefined && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json')
   headers.set('Accept', 'application/json')
+  if (method === 'POST' || method === 'PATCH' || method === 'DELETE') {
+    const csrfToken = getCookie('wisdom_csrf')
+    if (csrfToken) headers.set('X-CSRF-Token', csrfToken)
+  }
 
-  const response = await fetch(createUrl(path, params), { ...init, headers })
+  const response = await fetch(createUrl(path, params), {
+    ...init,
+    credentials: 'same-origin',
+    headers,
+  })
   if (!response.ok) return throwApiError(response)
   if (response.status === 204) return undefined as T
   return response.json() as Promise<T>
@@ -95,6 +132,7 @@ export async function apiFile(
   params?: Record<string, string | number | boolean | null | undefined>,
 ): Promise<ApiFile> {
   const response = await fetch(createUrl(path, params), {
+    credentials: 'same-origin',
     headers: { Accept: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' },
   })
   if (!response.ok) return throwApiError(response)

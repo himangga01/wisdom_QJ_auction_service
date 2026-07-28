@@ -13,22 +13,36 @@ interface UrlAnalysisPanelProps {
   stage?: AnalysisRunStage | null
   progress: number
   error: string
+  notice?: string
+  isRestoringRun?: boolean
+  isCancelling?: boolean
+  browserUnavailable?: boolean
   onStart: (request: AnalysisCreateApi) => void | Promise<unknown>
+  onCancel?: () => void | Promise<void>
 }
 
-const DEMO_URL = 'https://fin.land.naver.com/map?center=3zjA42-2AwLTK&zoom=17.1505204617303&layer=NobwRAlgJmBcYGMD2BbADgGwKYA8D6UWALgIYQZgA0YaJATiSgM5zjLrY4CSM8AjACYALAHYAzAFYwAX2pMs9BAAsACvUYtY4CEwBq5DCTgAzEhnnVSAIzhh6RCAmwzZ23nboOnWAsTIVqWgZmVg8vbB5bAQA2MQBOPgAOATihAAYZOQU6ZTVgzRBpaQBdIA'
-
-export function UrlAnalysisPanel({ status, stage = null, progress, error, onStart }: UrlAnalysisPanelProps) {
-  const [url, setUrl] = useState(DEMO_URL)
+export function UrlAnalysisPanel({
+  status,
+  stage = null,
+  progress,
+  error,
+  notice = '',
+  isRestoringRun = false,
+  isCancelling = false,
+  browserUnavailable = false,
+  onStart,
+  onCancel,
+}: UrlAnalysisPanelProps) {
+  const [url, setUrl] = useState('')
   const [collectBrokerDetails, setCollectBrokerDetails] = useState(true)
   const [interactionDelayPreset, setInteractionDelayPreset] =
     useState<InteractionDelayPresetApi>('normal')
-  const busy = status === 'queued' || status === 'running'
+  const busy = isRestoringRun || status === 'queued' || status === 'running'
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     const sourceUrl = url.trim()
-    if (!sourceUrl || busy) return
+    if (!sourceUrl || busy || browserUnavailable) return
     void Promise.resolve(
       onStart({
         sourceUrl,
@@ -62,6 +76,7 @@ export function UrlAnalysisPanel({ status, stage = null, progress, error, onStar
                 id="naver-land-url"
                 value={url}
                 onChange={(event) => setUrl(event.target.value)}
+                disabled={busy}
                 className="h-13 w-full rounded-xl border border-slate-300 bg-white pl-11 pr-4 text-sm outline-none transition focus:border-emerald-500 focus:ring-4 focus:ring-emerald-100"
                 placeholder="https://fin.land.naver.com/..."
                 aria-describedby={error ? 'url-error' : undefined}
@@ -69,10 +84,10 @@ export function UrlAnalysisPanel({ status, stage = null, progress, error, onStar
             </div>
             <button
               type="submit"
-              disabled={busy || !url.trim()}
+              disabled={busy || browserUnavailable || !url.trim()}
               className="inline-flex h-13 items-center justify-center gap-2 rounded-xl bg-slate-950 px-6 text-sm font-extrabold text-white transition hover:bg-emerald-700 focus:outline-none focus:ring-4 focus:ring-emerald-200 disabled:cursor-wait disabled:bg-slate-400"
             >
-              {status === 'queued' ? '요청 대기 중...' : status === 'running' ? '분석 중...' : '분석 시작'}
+              {isRestoringRun ? '분석 복원 중...' : status === 'queued' ? '요청 대기 중...' : status === 'running' ? '분석 중...' : '분석 시작'}
               <ArrowRight size={17} />
             </button>
           </div>
@@ -96,10 +111,22 @@ export function UrlAnalysisPanel({ status, stage = null, progress, error, onStar
               disabled={busy}
             />
           </div>
+          {browserUnavailable ? (
+            <p role="status" className="mt-2 text-sm font-semibold text-amber-700">
+              수집용 Chrome에 연결할 수 없습니다. 실행 상태를 확인한 뒤 다시 시도해 주세요.
+            </p>
+          ) : null}
           {error ? <p id="url-error" role="alert" className="mt-2 text-sm font-semibold text-rose-600">{error}</p> : null}
+          {notice ? <p role="status" className="mt-2 text-sm font-semibold text-emerald-700">{notice}</p> : null}
         </form>
 
-        <CrawlProgress status={status} stage={stage} progress={progress} />
+        <CrawlProgress
+          status={status}
+          stage={stage}
+          progress={progress}
+          isCancelling={isCancelling}
+          onCancel={onCancel}
+        />
       </div>
     </section>
   )

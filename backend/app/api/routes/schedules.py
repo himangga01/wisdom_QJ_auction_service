@@ -5,6 +5,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_session
+from app.api.dependencies.auth import current_user
+from app.models import User
 from app.domain.url_identity import InvalidSourceUrl
 from app.schemas.schedule import (
     ScheduleCreate,
@@ -24,8 +26,11 @@ from app.services.schedule_service import (
 router = APIRouter(prefix="/schedules", tags=["schedules"])
 
 
-def service(session: Annotated[AsyncSession, Depends(get_session)]) -> ScheduleService:
-    return ScheduleService(session)
+def service(
+    session: Annotated[AsyncSession, Depends(get_session)],
+    user: Annotated[User, Depends(current_user)],
+) -> ScheduleService:
+    return ScheduleService(session, user.id)
 
 
 def api_error(error: Exception, http_status: int) -> HTTPException:
@@ -98,4 +103,3 @@ async def get_schedule_runs(
         return await schedule_service.runs(schedule_id, limit=limit)
     except ScheduleNotFoundError as error:
         raise api_error(error, status.HTTP_404_NOT_FOUND) from error
-

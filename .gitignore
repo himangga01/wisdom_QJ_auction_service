@@ -9,6 +9,9 @@ backend/.env
 backend/data/
 backend/data/naver-chrome-profile/
 temp/local-runtime/
+temp/e2e/reference/inbox/
+temp/e2e/reference/case-manifest.local.json
+temp/e2e/reference/current/
 
 # Frontend
 frontend/node_modules/

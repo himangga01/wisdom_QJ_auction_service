@@ -5,14 +5,19 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_session
+from app.api.dependencies.auth import current_user
+from app.models import User
 from app.schemas.dashboard import DashboardResponse
 from app.services.query_service import QueryNotFoundError, QueryService
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
 
-def service(session: Annotated[AsyncSession, Depends(get_session)]) -> QueryService:
-    return QueryService(session)
+def service(
+    session: Annotated[AsyncSession, Depends(get_session)],
+    user: Annotated[User, Depends(current_user)],
+) -> QueryService:
+    return QueryService(session, user.id)
 
 
 @router.get("", response_model=DashboardResponse)
@@ -27,4 +32,3 @@ async def get_dashboard(
             status_code=status.HTTP_404_NOT_FOUND,
             detail={"code": error.code, "message": str(error)},
         ) from error
-

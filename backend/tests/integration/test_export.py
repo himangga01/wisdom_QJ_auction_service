@@ -6,12 +6,15 @@ from openpyxl import load_workbook
 
 from app.models import (
     Apartment,
+    ApartmentSnapshot,
     BrokerArticle,
     BrokerArticleSnapshot,
     ListingGroup,
     TrackedSource,
 )
 from app.services.export_service import (
+    APARTMENT_DETAIL_EXPORT_FIELDS,
+    APARTMENT_SUMMARY_SHEET,
     ExportService,
     SHEET_HEADERS,
     create_export_workbook,
@@ -33,7 +36,12 @@ def test_write_only_export_has_all_seven_sheets_and_headers() -> None:
     assert loaded.sheetnames == list(SHEET_HEADERS)
     for title, headers in SHEET_HEADERS.items():
         first_row = next(loaded[title].iter_rows(values_only=True))
-        assert first_row == tuple(headers)
+        expected = (
+            (*headers, *(label for _, label in APARTMENT_DETAIL_EXPORT_FIELDS))
+            if title == APARTMENT_SUMMARY_SHEET
+            else tuple(headers)
+        )
+        assert first_row == tuple(expected)
 
 
 def test_amount_display_and_filename_are_safe() -> None:
@@ -98,11 +106,23 @@ def test_broker_export_marks_disabled_details_and_blanks_detail_json() -> None:
         },
         captured_at=now,
     )
+    apartment_snapshot = ApartmentSnapshot(
+        id=uuid4(),
+        run_id=snapshot.run_id,
+        apartment_id=apartment.id,
+        details_json={"name": apartment.name},
+        captured_at=now,
+    )
     workbook, sheets = create_export_workbook()
     import asyncio
 
     asyncio.run(
-        ExportService(BrokerExportSession([(snapshot, article, group)]))._append_brokers(
+        ExportService(
+            BrokerExportSession(
+                [(snapshot, article, group, apartment_snapshot)]
+            ),
+            uuid4(),
+        )._append_brokers(
             sheets["중개사등록"],
             source,
             apartment,

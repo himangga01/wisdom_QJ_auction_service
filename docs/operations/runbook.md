@@ -58,7 +58,7 @@
 | `APP_RUNTIME` | Docker Compose에서는 `docker`, Docker 없는 SQLite 실행에서는 `local`을 사용한다. |
 | `DATABASE_URL` | Compose 서비스명 `postgres`를 사용한다. PostgreSQL 사용자·DB·비밀번호와 일치해야 한다. |
 | `REDIS_URL` | Compose 서비스명 `redis`를 사용한다. 외부 Redis 주소를 사용하지 않는다. |
-| `CRAWLER_HEADLESS` | 운영에서는 `true`다. |
+| `CRAWLER_CDP_URL` | local은 `http://127.0.0.1:42973`, Docker는 `http://chrome:9222`만 허용한다. |
 | `CRAWL_CONCURRENCY` | 파일럿 동안 `1`로 고정한다. |
 | `NAVER_REQUEST_DELAY_MIN` | 실행별 프리셋이 없을 때 사용하는 fallback 최소값이며 기본 `1.0`초다. |
 | `NAVER_REQUEST_DELAY_MAX` | 실행별 프리셋이 없을 때 사용하는 fallback 최대값이며 기본 `2.5`초다. |
@@ -218,6 +218,16 @@ docker compose -f docker-compose.production.yml start api worker scheduler
 - schema가 하위 호환이 아니면 이전 이미지만 기동하지 말고 승인된 백업 복구 절차를 사용한다.
 - `docker compose down -v`는 영속 데이터를 제거하므로 운영 절차에서 사용하지 않는다.
 
+### 12. Chrome readiness와 장애 복구
+
+- `APP_RUNTIME`만 런타임을 선택한다. local은 `http://127.0.0.1:42973`, Docker는 `http://chrome:9222` 외의 CDP 주소를 허용하지 않는다.
+- `/api/health`의 `browser=unavailable`과 `status=degraded`를 먼저 확인한다. API는 브라우저 장애 중에도 상태 응답을 제공한다.
+- `browser_unavailable`이면 새 즉시 분석은 생성되지 않고, 예약 실행은 실패 이력을 남긴 뒤 다음 예정 시각으로 이동한다.
+- `browser_disconnected`이면 해당 실행은 terminal 실패다. 자동 resume, retry, requeue를 하지 않는다.
+- local은 전용 Chrome만 재시작하고 `scripts/status.ps1`로 readiness를 확인한다. Docker는 별도 승인 후 `chrome` 서비스 상태와 `/json/version`을 확인한다.
+- 전용 프로필과 `chrome_profile` 볼륨에는 cookie와 세션이 포함될 수 있다. 장애 대응 중 자동 삭제·초기화·복원하지 않으며 별도 승인을 요구한다.
+- Chrome 이미지는 기본적으로 빌드 시점의 공식 Stable을 사용한다. 정확한 재현이 필요한 경우에만 공식 저장소에 존재하는 `GOOGLE_CHROME_VERSION`과 `CHROME_IMAGE_TAG`를 함께 지정하고, 승인된 정적 구성 확인 → 이미지 빌드 → `/json/version` → `about:blank` 순서로 확인한다.
+
 ---
 
 # AI Operations Contract (English)
@@ -240,6 +250,7 @@ runtime_services:
   - postgres
   - redis
   - frontend
+  - chrome
 startup_gate:
   service: migrate
   command: alembic upgrade head
@@ -248,13 +259,18 @@ external_ports:
   api: 127.0.0.1:42881
   postgres: none
   redis: none
+  chrome_cdp: none
 ```
 
-`api`, `worker`, and `scheduler` may start only after PostgreSQL and Redis are healthy and the one-shot migration service exits successfully. The frontend proxies `/api` to the API service. Place an approved TLS reverse proxy in front of the loopback-bound frontend for remote access.
+The non-root Chrome/Xvfb sidecar exposes CDP `9222` only to the internal Compose control network and persists its dedicated profile in `chrome_profile`. The worker waits for Chrome health; API startup does not, so health remains available during browser outages. The frontend proxies `/api` to the API service.
 
 ## Environment Contract
 
-Use `backend/.env` for `DATABASE_URL`, `REDIS_URL`, `CRAWLER_HEADLESS`, `CRAWL_CONCURRENCY`, `NAVER_REQUEST_DELAY_MIN`, `NAVER_REQUEST_DELAY_MAX`, `CORS_ORIGINS`, and `TIMEZONE`. Keep `CRAWL_CONCURRENCY=1`, `CRAWLER_HEADLESS=true`, and `TIMEZONE=Asia/Seoul` during the pilot. PostgreSQL Compose credentials and `DATABASE_URL` must describe the same database.
+Use `backend/.env` for `APP_RUNTIME`, `DATABASE_URL`, `REDIS_URL`, `CRAWLER_CDP_URL`, `CRAWL_CONCURRENCY`, `NAVER_REQUEST_DELAY_MIN`, `NAVER_REQUEST_DELAY_MAX`, `CORS_ORIGINS`, and `TIMEZONE`. `APP_RUNTIME` is the sole runtime selector: local permits only `http://127.0.0.1:42973`, Docker only `http://chrome:9222`. Keep crawl concurrency one.
+
+## Browser Recovery Contract
+
+`browser_unavailable` prevents immediate run persistence and records a failed scheduled history. `browser_disconnected` is terminal and must not auto-resume, retry, or requeue. Treat both local and Docker dedicated profiles as sensitive session storage. Never reset, delete, restore, or export them without separate approval. Never add sandbox bypasses, host CDP publication, stealth, fingerprint spoofing, proxy rotation, or CAPTCHA bypass.
 
 ## Logging Contract
 

@@ -3,10 +3,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, datetime, time, timezone
 from hashlib import sha256
+from typing import TypeVar
 from urllib.parse import urljoin
 from uuid import UUID
 
-from sqlalchemy import distinct, select
+from sqlalchemy import Select, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.crawler.navigation import validate_internal_article_href
@@ -37,8 +39,10 @@ from app.models import (
     ListingGroup,
     ListingSnapshot,
     MarketDetailSnapshot,
+    SourceListingState,
     TrackedSource,
 )
+from app.services.notification_service import NotificationService
 
 
 class PersistenceError(RuntimeError):
@@ -74,13 +78,15 @@ class _ExistingRecord:
     latest_snapshot: ListingSnapshot | None
     latest_aggregate: ListingAggregate | None
     latest_article_ids: frozenset[str]
-    source_seen: bool
-    source_state: str
-    source_missing_count: int
+    source_listing_state: SourceListingState | None = None
+    source_seen: bool = False
+    source_state: str = "active"
+    source_missing_count: int = 0
     latest_collect_broker_details: bool = True
 
 
 TERMINAL_RUN_STATUSES = {"completed", "partial", "failed", "blocked", "cancelled"}
+CatalogEntity = TypeVar("CatalogEntity")
 
 
 def _aware(value: datetime) -> datetime:
@@ -176,6 +182,22 @@ class PersistenceService:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
+    async def _insert_or_requery(
+        self,
+        candidate: CatalogEntity,
+        lookup: Select,
+    ) -> tuple[CatalogEntity, bool]:
+        try:
+            async with self.session.begin_nested():
+                self.session.add(candidate)
+                await self.session.flush()
+            return candidate, True
+        except IntegrityError:
+            existing = await self.session.scalar(lookup)
+            if existing is None:
+                raise
+            return existing, False
+
     async def _latest_complete_snapshot(
         self, *, group_id: UUID, source_id: UUID, current_run_id: UUID
     ) -> ListingSnapshot | None:
@@ -247,10 +269,17 @@ class PersistenceService:
             ).all()
         )
         group_ids = {group.id for group in groups}
-        source_seen_ids, source_lifecycle = await self._source_lifecycle(
-            source_id=source_id,
-            group_ids=group_ids,
-        )
+        source_states = {
+            state.listing_group_id: state
+            for state in (
+                await self.session.scalars(
+                    select(SourceListingState).where(
+                        SourceListingState.source_id == source_id,
+                        SourceListingState.listing_group_id.in_(group_ids),
+                    )
+                )
+            ).all()
+        }
         records: list[_ExistingRecord] = []
         for group in groups:
             complete_snapshot = await self._latest_complete_snapshot(
@@ -281,6 +310,7 @@ class PersistenceService:
                 normalized_price=identity_snapshot.price,
                 article_ids=article_ids,
             )
+            source_state = source_states.get(group.id)
             records.append(
                 _ExistingRecord(
                     identity=ExistingListingIdentity(
@@ -298,11 +328,18 @@ class PersistenceService:
                         if complete_snapshot is not None
                         else frozenset()
                     ),
-                    source_seen=group.id in source_seen_ids,
-                    source_state=source_lifecycle.get(group.id, ("active", 0))[0],
-                    source_missing_count=source_lifecycle.get(
-                        group.id, ("active", 0)
-                    )[1],
+                    source_listing_state=source_state,
+                    source_seen=source_state is not None,
+                    source_state=(
+                        source_state.visibility_state
+                        if source_state is not None
+                        else "active"
+                    ),
+                    source_missing_count=(
+                        source_state.missing_count
+                        if source_state is not None
+                        else 0
+                    ),
                     latest_collect_broker_details=(
                         _collect_broker_details_enabled(
                             await self.session.get(CrawlRun, complete_snapshot.run_id)
@@ -314,59 +351,10 @@ class PersistenceService:
             )
         return records
 
-    async def _source_lifecycle(
-        self,
-        *,
-        source_id: UUID,
-        group_ids: set[UUID],
-    ) -> tuple[set[UUID], dict[UUID, tuple[str, int]]]:
-        if not group_ids:
-            return set(), {}
-        source_seen_ids = set(
-            (
-                await self.session.scalars(
-                    select(distinct(ListingSnapshot.listing_group_id))
-                    .join(CrawlRun, CrawlRun.id == ListingSnapshot.run_id)
-                    .where(
-                        ListingSnapshot.listing_group_id.in_(group_ids),
-                        CrawlRun.source_id == source_id,
-                        CrawlRun.status.in_(("completed", "partial")),
-                    )
-                )
-            ).all()
-        )
-        event_rows = (
-            await self.session.execute(
-                select(
-                    ChangeEvent.listing_group_id,
-                    ChangeEvent.event_type,
-                )
-                .join(CrawlRun, CrawlRun.id == ChangeEvent.run_id)
-                .where(
-                    ChangeEvent.listing_group_id.in_(group_ids),
-                    CrawlRun.source_id == source_id,
-                    CrawlRun.status.in_(("completed", "partial")),
-                )
-                .order_by(ChangeEvent.detected_at.asc(), ChangeEvent.id.asc())
-            )
-        ).all()
-        lifecycle: dict[UUID, tuple[str, int]] = {}
-        for group_id, event_type in event_rows:
-            if event_type == "missing":
-                lifecycle[group_id] = ("missing", 1)
-            elif event_type == "removed":
-                lifecycle[group_id] = ("removed", 2)
-            elif event_type in {"new", "changed", "restored"}:
-                lifecycle[group_id] = ("active", 0)
-        return source_seen_ids, lifecycle
-
     async def _source_group_ids(self, source_id: UUID) -> set[UUID]:
         result = await self.session.scalars(
-            select(distinct(ListingSnapshot.listing_group_id))
-            .join(CrawlRun, CrawlRun.id == ListingSnapshot.run_id)
-            .where(
-                CrawlRun.source_id == source_id,
-                CrawlRun.status.in_(("completed", "partial")),
+            select(SourceListingState.listing_group_id).where(
+                SourceListingState.source_id == source_id
             )
         )
         return set(result.all())
@@ -421,7 +409,7 @@ class PersistenceService:
             )
             safe_url = urljoin("https://fin.land.naver.com", target)
             if article is None:
-                article = BrokerArticle(
+                candidate = BrokerArticle(
                     listing_group_id=group.id,
                     naver_article_id=detail.article_id,
                     provider=detail.provider,
@@ -430,17 +418,20 @@ class PersistenceService:
                     first_seen_at=captured_at,
                     last_seen_at=captured_at,
                 )
-                self.session.add(article)
-                await self.session.flush()
-            elif article.listing_group_id != group.id:
+                article, _ = await self._insert_or_requery(
+                    candidate,
+                    select(BrokerArticle).where(
+                        BrokerArticle.naver_article_id == detail.article_id
+                    ),
+                )
+            if article.listing_group_id != group.id:
                 raise ArticleGroupConflictError(
                     f"article {detail.article_id} belongs to another listing group"
                 )
-            else:
-                article.provider = detail.provider
-                article.is_npay = detail.is_npay
-                article.article_url = safe_url
-                article.last_seen_at = captured_at
+            article.provider = detail.provider
+            article.is_npay = detail.is_npay
+            article.article_url = safe_url
+            article.last_seen_at = captured_at
 
             details_json = detail.model_dump(mode="json")
             self.session.add(
@@ -480,27 +471,40 @@ class PersistenceService:
             )
         )
 
-    def _add_event(
+    async def _add_event(
         self,
         *,
-        run_id: UUID,
+        run: CrawlRun,
+        source: TrackedSource,
+        apartment: Apartment,
         group_id: UUID,
         event_type: str,
+        notification_baseline: bool,
+        compare_run_id: UUID | None,
         changed_fields: list[str] | tuple[str, ...] = (),
         before: dict[str, object] | None = None,
         after: dict[str, object] | None = None,
         detected_at: datetime,
     ) -> None:
-        self.session.add(
-            ChangeEvent(
-                run_id=run_id,
-                listing_group_id=group_id,
-                event_type=event_type,
-                changed_fields_json=list(changed_fields),
-                before_json=before,
-                after_json=after,
-                detected_at=detected_at,
-            )
+        event = ChangeEvent(
+            run_id=run.id,
+            listing_group_id=group_id,
+            event_type=event_type,
+            changed_fields_json=list(changed_fields),
+            before_json=before,
+            after_json=after,
+            detected_at=detected_at,
+        )
+        self.session.add(event)
+        await self.session.flush()
+        await NotificationService(
+            self.session, source.owner_user_id
+        ).create_from_change_event(
+            event=event,
+            source=source,
+            apartment=apartment,
+            baseline=notification_baseline,
+            compare_run_id=compare_run_id,
         )
 
     async def persist(self, run_id: UUID, payload: CrawlPayload) -> PersistenceOutcome:
@@ -522,6 +526,15 @@ class PersistenceService:
             source = await self.session.get(TrackedSource, run.source_id)
             if source is None:
                 raise RunNotFoundError(f"source {run.source_id} not found")
+            notification_service = NotificationService(
+                self.session, source.owner_user_id
+            )
+            notification_baseline = not (
+                await notification_service.has_completed_baseline(source.id)
+            )
+            compare_run_id = await notification_service.previous_successful_run_id(
+                source.id, run.id
+            )
             if (
                 source.naver_complex_id is not None
                 and source.naver_complex_id != payload.apartment.complex_id
@@ -539,7 +552,7 @@ class PersistenceService:
                 incoming_details, _ = normalize_apartment_details(
                     payload.apartment.details  # type: ignore[arg-type]
                 )
-                apartment = Apartment(
+                candidate = Apartment(
                     naver_complex_id=payload.apartment.complex_id,
                     name=payload.apartment.name,
                     address=payload.apartment.address,
@@ -548,15 +561,22 @@ class PersistenceService:
                     created_at=captured_at,
                     updated_at=captured_at,
                 )
-                self.session.add(apartment)
-                await self.session.flush()
+                apartment, created = await self._insert_or_requery(
+                    candidate,
+                    select(Apartment).where(
+                        Apartment.naver_complex_id
+                        == payload.apartment.complex_id
+                    ),
+                )
             else:
-                apartment.name = payload.apartment.name
-                if payload.apartment.address.strip():
-                    apartment.address = payload.apartment.address
+                created = False
                 incoming_details, _ = normalize_apartment_details(
                     payload.apartment.details  # type: ignore[arg-type]
                 )
+            if not created:
+                apartment.name = payload.apartment.name
+                if payload.apartment.address.strip():
+                    apartment.address = payload.apartment.address
                 merged_details = _merge_current_apartment_details(
                     apartment.details_json, incoming_details
                 )
@@ -579,9 +599,9 @@ class PersistenceService:
             candidate_identities = [record.identity for record in existing]
 
             apartment_json = payload.apartment.model_dump(mode="json")
-            apartment_json["name"] = apartment.name
-            apartment_json["address"] = apartment.address
-            apartment_json["details"] = dict(apartment.details_json)
+            apartment_json["name"] = payload.apartment.name
+            apartment_json["address"] = payload.apartment.address
+            apartment_json["details"] = dict(incoming_details)
             self.session.add(
                 ApartmentSnapshot(
                     run_id=run.id,
@@ -597,16 +617,38 @@ class PersistenceService:
                 match = choose_existing_listing(incoming_identity, candidate_identities)
                 record = record_by_id.get(match.listing_group_id) if match else None
                 if record is None:
-                    group = ListingGroup(
+                    identity_key = build_identity_key(incoming_identity)
+                    candidate = ListingGroup(
                         apartment_id=apartment.id,
-                        identity_key=build_identity_key(incoming_identity),
+                        identity_key=identity_key,
                         first_seen_at=captured_at,
                         last_seen_at=captured_at,
                         state="active",
                         missing_count=0,
                     )
-                    self.session.add(group)
-                    await self.session.flush()
+                    group, _ = await self._insert_or_requery(
+                        candidate,
+                        select(ListingGroup).where(
+                            ListingGroup.apartment_id == apartment.id,
+                            ListingGroup.identity_key == identity_key,
+                        ),
+                    )
+                    if group.id in matched_group_ids:
+                        raise PersistenceError(
+                            "한 실행의 여러 매물이 같은 listing_group으로 해석되었습니다."
+                        )
+                    self.session.add(
+                        SourceListingState(
+                            source_id=source.id,
+                            listing_group_id=group.id,
+                            visibility_state="active",
+                            missing_count=0,
+                            first_seen_at=captured_at,
+                            last_seen_at=captured_at,
+                            removed_at=None,
+                            updated_at=captured_at,
+                        )
+                    )
                     event_type = "new"
                     previous = None
                 else:
@@ -621,6 +663,17 @@ class PersistenceService:
                         record.source_seen = True
                         record.source_state = "active"
                         record.source_missing_count = 0
+                        record.source_listing_state = SourceListingState(
+                            source_id=source.id,
+                            listing_group_id=group.id,
+                            visibility_state="active",
+                            missing_count=0,
+                            first_seen_at=captured_at,
+                            last_seen_at=captured_at,
+                            removed_at=None,
+                            updated_at=captured_at,
+                        )
+                        self.session.add(record.source_listing_state)
                     else:
                         transition = transition_presence(
                             state=record.source_state,
@@ -629,9 +682,13 @@ class PersistenceService:
                         event_type = transition.event_type
                         record.source_state = transition.state
                         record.source_missing_count = transition.missing_count
-                    group.state = record.source_state
-                    group.missing_count = record.source_missing_count
-                    group.last_seen_at = captured_at
+                        state = record.source_listing_state
+                        if state is not None:
+                            state.visibility_state = transition.state
+                            state.missing_count = transition.missing_count
+                            state.last_seen_at = captured_at
+                            state.removed_at = None
+                            state.updated_at = captured_at
 
                 matched_group_ids.add(group.id)
                 aggregate = aggregate_broker_articles(listing.broker_articles)
@@ -696,20 +753,28 @@ class PersistenceService:
                 self._store_market_details(snapshot, listing.market_details)
 
                 if event_type in {"new", "restored"}:
-                    self._add_event(
-                        run_id=run.id,
+                    await self._add_event(
+                        run=run,
+                        source=source,
+                        apartment=apartment,
                         group_id=group.id,
                         event_type=event_type,
+                        notification_baseline=notification_baseline,
+                        compare_run_id=compare_run_id,
                         before=_comparable_json(previous) if previous else None,
                         after=_comparable_json(current),
                         detected_at=captured_at,
                     )
                     event_count += 1
                 elif comparison is not None and comparison.event_type == "changed":
-                    self._add_event(
-                        run_id=run.id,
+                    await self._add_event(
+                        run=run,
+                        source=source,
+                        apartment=apartment,
                         group_id=group.id,
                         event_type="changed",
+                        notification_baseline=notification_baseline,
+                        compare_run_id=compare_run_id,
                         changed_fields=comparison.changed_fields,
                         before=comparison.before,
                         after=comparison.after,
@@ -730,15 +795,31 @@ class PersistenceService:
                     missing_count=record.source_missing_count,
                     run_status=payload.status,
                 )
+                if (
+                    transition.state == before_state
+                    and transition.missing_count == before_count
+                ):
+                    continue
                 record.source_state = transition.state
                 record.source_missing_count = transition.missing_count
-                group.state = transition.state
-                group.missing_count = transition.missing_count
+                state = record.source_listing_state
+                if state is None:
+                    continue
+                state.visibility_state = transition.state
+                state.missing_count = transition.missing_count
+                state.removed_at = (
+                    captured_at if transition.state == "removed" else None
+                )
+                state.updated_at = captured_at
                 if transition.event_type:
-                    self._add_event(
-                        run_id=run.id,
+                    await self._add_event(
+                        run=run,
+                        source=source,
+                        apartment=apartment,
                         group_id=group.id,
                         event_type=transition.event_type,
+                        notification_baseline=notification_baseline,
+                        compare_run_id=compare_run_id,
                         before={"state": before_state, "missingCount": before_count},
                         after={
                             "state": transition.state,

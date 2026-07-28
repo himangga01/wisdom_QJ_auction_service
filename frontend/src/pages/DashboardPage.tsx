@@ -18,7 +18,7 @@ export function DashboardPage() {
   const sourceId = selectedSummary?.sourceId
   const dashboardQuery = useQuery({
     queryKey: apartmentKeys.dashboard(sourceId),
-    queryFn: () => getDashboard(sourceId),
+    queryFn: () => getDashboard(sourceId as string),
     enabled: !analysis.isDemo && Boolean(sourceId),
     staleTime: 30_000,
   })

@@ -71,7 +71,11 @@ $env:GPT_NAVER_FULL_REFERENCE_PATH = "<absolute-reference-json-path>"
 
 ### 이번 실제 테스트 범위
 
-이번 실제 테스트는 사용자 지시에 따라 아파트 1곳만 별도 실행한다. 이는 표본 E2E 또는 production 전수 수집 정책을 변경하지 않으며, production 전수 수집은 계속 별도의 명시적 opt-in이 필요하다.
+실제 네이버 점검은 사용자가 해당 실행을 별도로 명시 승인한 경우에만 아파트 1곳으로 제한해 실행한다. 코드 구현·단위 테스트·Docker 정적 확인 승인은 라이브 점검 승인으로 간주하지 않는다. 이는 표본 E2E 또는 production 전수 수집 정책을 변경하지 않으며, production 전수 수집은 계속 별도의 명시적 opt-in이 필요하다.
+
+### GitHub Actions 수동 실행 보호
+
+`Live Naver E2E` workflow는 `main` ref의 수동 실행만 허용한다. 영속 self-hosted runner에서 다른 branch나 tag의 코드를 실행하지 않는다. GitHub의 `naver-live-e2e` environment에도 main branch만 배포 가능한 보호 규칙을 설정한다. workflow는 저장소 루트 `.venv`를 새로 만들고 그 interpreter만 사용하며, runner-local manifest와 reference는 checkout 바깥 경로에서 읽는다.
 
 ### 결과와 diff
 
@@ -177,7 +181,11 @@ A full run can take tens of minutes to several hours depending on complex and li
 
 ### Current Live-Test Scope
 
-The current actual live test is separately limited to one apartment under explicit user direction. This does not change the sampled-E2E or full-production collection policies; full collection remains a separate explicit opt-in.
+Run an actual Naver check only after separate, explicit approval for that live action, and limit it to one apartment. Approval for implementation, unit tests, or static Docker checks is not live-test approval. This does not change the sampled-E2E or full-production collection policies; full collection remains a separate explicit opt-in.
+
+### Protected GitHub Actions Dispatch
+
+The `Live Naver E2E` workflow accepts manual dispatch only from the `main` ref. Never execute arbitrary branch or tag code on the persistent self-hosted runner. Configure the `naver-live-e2e` GitHub environment with a matching main-only deployment branch policy. The workflow creates and exclusively uses the repository-root `.venv`; runner-local manifests and references remain outside the checkout.
 
 ### Results and Diffs
 

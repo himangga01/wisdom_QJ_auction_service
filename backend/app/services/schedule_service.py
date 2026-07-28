@@ -20,16 +20,15 @@ from app.schemas.schedule import (
     ScheduleRun,
     ScheduleRuns,
 )
-from app.services.analysis_service import AnalysisService, CrawlTaskDispatcher
 from app.services.query_service import seoul_iso
 
 
 class ScheduleNotFoundError(LookupError):
-    code = "schedule_not_found"
+    code = "dataset_not_found"
 
 
 class ScheduleSourceNotFoundError(LookupError):
-    code = "schedule_source_not_found"
+    code = "dataset_not_found"
 
 
 class ScheduleConflictError(RuntimeError):
@@ -93,17 +92,30 @@ async def enqueue_with_source_lock(
 
 
 class ScheduleService:
-    def __init__(self, session: AsyncSession) -> None:
+    def __init__(self, session: AsyncSession, actor_user_id: UUID) -> None:
         self.session = session
+        self.actor_user_id = actor_user_id
 
     async def _source(self, payload: ScheduleCreate) -> TrackedSource:
         source: TrackedSource | None = None
         if payload.source_id is not None:
-            source = await self.session.get(TrackedSource, payload.source_id)
-        if source is None and payload.source_url:
+            source = await self.session.scalar(
+                select(TrackedSource).where(
+                    TrackedSource.id == payload.source_id,
+                    TrackedSource.owner_user_id == self.actor_user_id,
+                )
+            )
+            if source is None:
+                raise ScheduleSourceNotFoundError(
+                    "소유한 활성 조사 URL을 찾을 수 없습니다."
+                )
+        elif payload.source_url:
             identity = normalize_source_url(payload.source_url)
             source = await self.session.scalar(
-                select(TrackedSource).where(TrackedSource.url_hash == identity.url_hash)
+                select(TrackedSource).where(
+                    TrackedSource.owner_user_id == self.actor_user_id,
+                    TrackedSource.url_hash == identity.url_hash,
+                )
             )
         if source is None or not source.is_active:
             raise ScheduleSourceNotFoundError(
@@ -136,13 +148,21 @@ class ScheduleService:
             await self.session.execute(
                 select(CrawlSchedule, TrackedSource)
                 .join(TrackedSource, TrackedSource.id == CrawlSchedule.source_id)
+                .where(TrackedSource.owner_user_id == self.actor_user_id)
                 .order_by(CrawlSchedule.next_run_at.asc(), CrawlSchedule.id.asc())
             )
         ).all()
         return [self._response(schedule, source) for schedule, source in rows]
 
     async def _get(self, schedule_id: UUID) -> CrawlSchedule:
-        schedule = await self.session.get(CrawlSchedule, schedule_id)
+        schedule = await self.session.scalar(
+            select(CrawlSchedule)
+            .join(TrackedSource, TrackedSource.id == CrawlSchedule.source_id)
+            .where(
+                CrawlSchedule.id == schedule_id,
+                TrackedSource.owner_user_id == self.actor_user_id,
+            )
+        )
         if schedule is None:
             raise ScheduleNotFoundError("스케줄을 찾을 수 없습니다.")
         return schedule
@@ -277,63 +297,3 @@ class ScheduleService:
                 for run in runs
             ],
         )
-
-    async def enqueue_due(
-        self,
-        *,
-        lock_manager: SourceLockManager,
-        dispatcher: CrawlTaskDispatcher,
-        now: datetime | None = None,
-    ) -> dict[str, int]:
-        current = now or datetime.now(timezone.utc)
-        rows = (
-            await self.session.execute(
-                select(CrawlSchedule, TrackedSource)
-                .join(TrackedSource, TrackedSource.id == CrawlSchedule.source_id)
-                .where(
-                    CrawlSchedule.enabled.is_(True),
-                    CrawlSchedule.next_run_at <= current,
-                    TrackedSource.is_active.is_(True),
-                )
-                .order_by(CrawlSchedule.next_run_at.asc())
-            )
-        ).all()
-        counts = {"due": len(rows), "enqueued": 0, "deduplicated": 0, "locked": 0}
-        for schedule, source in rows:
-            created = False
-
-            async def enqueue() -> None:
-                nonlocal created
-                _, created = await AnalysisService(self.session, dispatcher).create(
-                    source.normalized_url,
-                    collect_broker_details=schedule.collect_broker_details,
-                    interaction_delay_preset=schedule.interaction_delay_preset,
-                )
-
-            try:
-                acquired = await enqueue_with_source_lock(
-                    lock_manager, source.id, enqueue
-                )
-            except Exception:
-                schedule.next_run_at = calculate_next_run(
-                    schedule.cadence,
-                    schedule.time_of_day,
-                    current,
-                    timezone_name=schedule.timezone,
-                    weekday=schedule.weekday,
-                ).astimezone(timezone.utc)
-                await self.session.commit()
-                continue
-            if not acquired:
-                counts["locked"] += 1
-                continue
-            counts["enqueued" if created else "deduplicated"] += 1
-            schedule.next_run_at = calculate_next_run(
-                schedule.cadence,
-                schedule.time_of_day,
-                current,
-                timezone_name=schedule.timezone,
-                weekday=schedule.weekday,
-            ).astimezone(timezone.utc)
-            await self.session.commit()
-        return counts

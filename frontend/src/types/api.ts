@@ -25,6 +25,14 @@ export type InteractionDelayPresetApi =
   | 'normal'
   | 'careful'
   | 'very_careful'
+export type NotificationEventTypeApi = 'new' | 'changed' | 'removed' | 'restored'
+
+export interface HealthResponseApi {
+  status: 'ok' | 'degraded'
+  database: 'connected' | 'disconnected'
+  redis: 'connected' | 'disconnected' | 'not_required'
+  browser: 'ready' | 'unavailable' | 'not_required'
+}
 
 export interface AnalysisCreateApi {
   sourceUrl: string
@@ -282,3 +290,45 @@ export interface ScheduleDeleteApi {
   id: string
   action: 'disabled' | 'deleted'
 }
+
+export interface NotificationLinkApi {
+  sourceId: string
+  complexId: string
+  runId: string
+  compareRunId: string | null
+  focusListingId: string
+}
+
+export interface NotificationItemApi {
+  id: string
+  eventType: NotificationEventTypeApi
+  title: string
+  summary: Record<string, unknown>
+  readAt: string | null
+  createdAt: string
+  link: NotificationLinkApi
+}
+
+export interface NotificationPageApi {
+  items: NotificationItemApi[]
+  nextCursor: string | null
+}
+
+export interface NotificationUnreadCountApi {
+  count: number
+}
+
+export interface NotificationReadAllApi {
+  updatedCount: number
+}
+
+export interface NotificationPreferenceApi {
+  sourceId: string
+  enabled: boolean
+  notifyNew: boolean
+  notifyChanged: boolean
+  notifyRemoved: boolean
+  notifyRestored: boolean
+}
+
+export type NotificationPreferencePatchApi = Omit<NotificationPreferenceApi, 'sourceId'>

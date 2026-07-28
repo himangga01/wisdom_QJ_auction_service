@@ -25,19 +25,29 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
-
-
 def utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
 class TrackedSource(Base):
     __tablename__ = "tracked_sources"
+    __table_args__ = (
+        UniqueConstraint(
+            "owner_user_id",
+            "url_hash",
+            name="uq_tracked_sources_owner_url_hash",
+        ),
+    )
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
     source_url: Mapped[str] = mapped_column(Text, nullable=False)
     normalized_url: Mapped[str] = mapped_column(Text, nullable=False)
-    url_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    url_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    owner_user_id: Mapped[UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
     naver_complex_id: Mapped[str | None] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, nullable=False
@@ -46,6 +56,16 @@ class TrackedSource(Base):
 
     runs: Mapped[list[CrawlRun]] = relationship(back_populates="source")
     schedules: Mapped[list[CrawlSchedule]] = relationship(back_populates="source")
+    listing_states: Mapped[list["SourceListingState"]] = relationship(
+        back_populates="source"
+    )
+    notification_preference: Mapped["SourceNotificationPreference | None"] = relationship(
+        back_populates="source", uselist=False
+    )
+    notifications: Mapped[list["Notification"]] = relationship(
+        back_populates="source"
+    )
+    owner: Mapped["User"] = relationship(back_populates="sources")
 
 
 class CrawlRun(Base):
@@ -107,6 +127,9 @@ class CrawlRun(Base):
         back_populates="run"
     )
     change_events: Mapped[list[ChangeEvent]] = relationship(back_populates="run")
+    notifications: Mapped[list["Notification"]] = relationship(
+        back_populates="run", foreign_keys="Notification.run_id"
+    )
 
 
 class Apartment(Base):
@@ -169,6 +192,9 @@ class ListingGroup(Base):
         back_populates="listing_group"
     )
     change_events: Mapped[list[ChangeEvent]] = relationship(
+        back_populates="listing_group"
+    )
+    source_states: Mapped[list["SourceListingState"]] = relationship(
         back_populates="listing_group"
     )
 
@@ -314,6 +340,9 @@ class ChangeEvent(Base):
 
     run: Mapped[CrawlRun] = relationship(back_populates="change_events")
     listing_group: Mapped[ListingGroup] = relationship(back_populates="change_events")
+    notifications: Mapped[list["Notification"]] = relationship(
+        back_populates="change_event"
+    )
 
 
 class CrawlSchedule(Base):

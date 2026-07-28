@@ -7,6 +7,8 @@ interface CrawlProgressProps {
   status: CrawlProgressStatus
   stage?: AnalysisRunStage | null
   progress: number
+  isCancelling?: boolean
+  onCancel?: () => void | Promise<void>
 }
 
 const steps = ['URL 확인', '매물 목록 수집', '중개사·상세 정보 정리', '결과 저장'] as const
@@ -21,7 +23,13 @@ const stageStep: Record<AnalysisRunStage, number> = {
   save: 3,
 }
 
-export function CrawlProgress({ status, stage = null, progress }: CrawlProgressProps) {
+export function CrawlProgress({
+  status,
+  stage = null,
+  progress,
+  isCancelling = false,
+  onCancel,
+}: CrawlProgressProps) {
   const visible = status === 'queued' || status === 'running' || status === 'completed' || status === 'partial'
   if (!visible) return null
 
@@ -70,6 +78,16 @@ export function CrawlProgress({ status, stage = null, progress }: CrawlProgressP
           )
         })}
       </ol>
+      {status === 'queued' && onCancel ? (
+        <button
+          type="button"
+          onClick={() => void onCancel()}
+          disabled={isCancelling}
+          className="mt-4 rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-extrabold text-slate-700 hover:border-rose-300 hover:text-rose-700 disabled:cursor-wait disabled:text-slate-400"
+        >
+          {isCancelling ? '취소 중...' : '대기 중인 분석 취소'}
+        </button>
+      ) : null}
     </div>
   )
 }

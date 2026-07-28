@@ -2,6 +2,7 @@ import { ArrowRight, Users } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import type { ApartmentSummary, ListingGroup } from '../../types/realEstate'
 import { formatArea, formatCollectedAt, formatListingPrice, formatKoreanPrice, tradeTypeLabels } from '../../utils/formatters'
+import { listingHref } from '../../utils/sourceLinks'
 import { ChangeBadge } from './ChangeBadge'
 
 function PriceCell({ listing }: { listing: ListingGroup }) {
@@ -32,7 +33,7 @@ export function ListingResearchTable({ apartment, listings }: { apartment: Apart
               <td className="px-4 py-4"><p className="text-sm font-semibold text-slate-700">{formatArea(listing)}</p><p className="mt-1 text-xs text-slate-400">{listing.direction}</p></td>
               <td className="px-4 py-4"><span className="inline-flex items-center gap-1.5 text-sm font-bold text-slate-700"><Users size={15} /> {listing.registrations.length}곳</span></td>
               <td className="px-4 py-4"><p className="text-xs font-semibold text-slate-600">{formatCollectedAt(listing.lastSeenAt)}</p>{listing.removedAt ? <p className="mt-1 text-xs font-bold text-rose-600">삭제 확인 {formatCollectedAt(listing.removedAt)}</p> : null}</td>
-              <td className="px-4 py-4"><Link to={`/apartments/${apartment.complexId}/listings/${listing.groupId}`} aria-label={`${listing.building} 매물 상세 보기`} className="grid size-9 place-items-center rounded-full bg-slate-100 text-slate-500 hover:bg-slate-900 hover:text-white"><ArrowRight size={16} /></Link></td>
+              <td className="px-4 py-4"><Link to={listingHref(apartment.complexId, listing.groupId, { sourceId: apartment.sourceId, runId: listing.runId })} aria-label={`${listing.building} 매물 상세 보기`} className="grid size-9 place-items-center rounded-full bg-slate-100 text-slate-500 hover:bg-slate-900 hover:text-white"><ArrowRight size={16} /></Link></td>
             </tr>
           ))}
         </tbody>

@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import type { ApartmentSummary } from '../../types/realEstate'
 import { getApartmentMetrics, getTradeMetrics } from '../../utils/dashboard'
 import { formatCollectedAt } from '../../utils/formatters'
+import { apartmentHref } from '../../utils/sourceLinks'
 
 function ChangeSummary({ apartment }: { apartment: ApartmentSummary }) {
   const metrics = getApartmentMetrics(apartment)
@@ -38,7 +39,7 @@ export function ApartmentResearchTable({ apartments }: { apartments: ApartmentSu
               return (
                 <tr key={apartment.complexId} className="transition hover:bg-slate-50/70">
                   <td className="px-5 py-5">
-                    <Link to={`/apartments/${apartment.complexId}`} className="font-extrabold text-slate-950 hover:text-emerald-700">{apartment.complexName}</Link>
+                    <Link to={apartmentHref(apartment.complexId, { sourceId: apartment.sourceId })} className="font-extrabold text-slate-950 hover:text-emerald-700">{apartment.complexName}</Link>
                     <p className="mt-1 flex items-center gap-1 text-xs text-slate-400"><MapPin size={12} /> {apartment.address}</p>
                   </td>
                   <td className="px-4 py-5 text-xs font-semibold text-slate-500">{latest ? formatCollectedAt(latest.collectedAt) : '-'}</td>
@@ -46,7 +47,7 @@ export function ApartmentResearchTable({ apartments }: { apartments: ApartmentSu
                     <td key={tradeType} className="px-4 py-5 text-center text-sm font-black text-slate-800">{getTradeMetrics(apartment, tradeType).count}건</td>
                   ))}
                   <td className="px-4 py-5"><ChangeSummary apartment={apartment} /></td>
-                  <td className="px-4 py-5"><Link to={`/apartments/${apartment.complexId}`} aria-label={`${apartment.complexName} 상세 보기`} className="grid size-9 place-items-center rounded-full bg-slate-100 text-slate-500 hover:bg-emerald-600 hover:text-white"><ArrowRight size={16} /></Link></td>
+                  <td className="px-4 py-5"><Link to={apartmentHref(apartment.complexId, { sourceId: apartment.sourceId })} aria-label={`${apartment.complexName} 상세 보기`} className="grid size-9 place-items-center rounded-full bg-slate-100 text-slate-500 hover:bg-emerald-600 hover:text-white"><ArrowRight size={16} /></Link></td>
                 </tr>
               )
             })}
@@ -58,7 +59,7 @@ export function ApartmentResearchTable({ apartments }: { apartments: ApartmentSu
         {apartments.map((apartment) => {
           const latest = apartment.history.at(-1)
           return (
-            <Link key={apartment.complexId} to={`/apartments/${apartment.complexId}`} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <Link key={apartment.complexId} to={apartmentHref(apartment.complexId, { sourceId: apartment.sourceId })} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
               <div className="flex items-start justify-between gap-3">
                 <div><h2 className="font-black text-slate-950">{apartment.complexName}</h2><p className="mt-1 text-xs text-slate-400">{apartment.address}</p></div>
                 <ArrowRight className="text-slate-400" size={18} />

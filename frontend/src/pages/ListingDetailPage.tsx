@@ -31,6 +31,7 @@ import { useDemoAnalysis } from '../state/DemoAnalysisContext'
 import type { MarketDetailsApi } from '../types/api'
 import type { BrokerRegistration } from '../types/realEstate'
 import { formatArea, formatCollectedAt, formatListingPrice, formatKoreanPrice, tradeTypeLabels } from '../utils/formatters'
+import { apartmentHref } from '../utils/sourceLinks'
 
 function formatWon(value: number): string {
   if (value >= 100_000_000) return formatKoreanPrice(value)
@@ -184,15 +185,29 @@ export function ListingDetailPage() {
   const runId = searchParams.get('runId') ?? undefined
   const analysis = useAnalysis()
   const demo = useDemoAnalysis()
+  const selectedApartment = analysis.selectedApartment
+  const sourceId = searchParams.get('sourceId') ?? (
+    selectedApartment && selectedApartment.complexId === complexId
+      ? selectedApartment.sourceId
+      : undefined
+  )
   const listingQuery = useQuery({
-    queryKey: apartmentKeys.listing(listingId ?? '', runId),
-    queryFn: () => getListing(listingId as string, runId),
-    enabled: !analysis.isDemo && Boolean(listingId),
+    queryKey: apartmentKeys.listing(listingId ?? '', runId, sourceId),
+    queryFn: () => getListing(
+      listingId as string,
+      sourceId as string,
+      runId,
+    ),
+    enabled: !analysis.isDemo && Boolean(listingId && sourceId),
   })
   const apartmentQuery = useQuery({
-    queryKey: apartmentKeys.detail(complexId ?? '', runId),
-    queryFn: () => getApartment(complexId as string, runId),
-    enabled: !analysis.isDemo && Boolean(complexId),
+    queryKey: apartmentKeys.detail(complexId ?? '', runId, sourceId),
+    queryFn: () => getApartment(
+      complexId as string,
+      sourceId as string,
+      runId,
+    ),
+    enabled: !analysis.isDemo && Boolean(complexId && sourceId),
   })
   const demoApartment = demo.dataset?.apartments.find((item) => item.complexId === complexId)
   const demoListing = demoApartment?.listingGroups.find((item) => item.groupId === listingId)
@@ -203,6 +218,9 @@ export function ListingDetailPage() {
   const listing = analysis.isDemo ? demoListing : realListing
 
   if (analysis.isDemo && !demo.dataset) return <DatasetRequired />
+  if (!analysis.isDemo && !sourceId) {
+    return <DatasetRequired error="조사 출처를 확인할 수 없습니다. 조사 아파트 목록에서 다시 열어 주세요." />
+  }
   if (!analysis.isDemo && (listingQuery.isLoading || apartmentQuery.isLoading)) return <DatasetRequired isLoading />
   const queryError = listingQuery.error ?? apartmentQuery.error
   if (!analysis.isDemo && queryError) return <DatasetRequired error={queryError instanceof Error ? queryError.message : '매물 상세를 불러오지 못했습니다.'} />
@@ -230,7 +248,7 @@ export function ListingDetailPage() {
   return (
     <div className="space-y-6">
       <div>
-        <Link to={`/apartments/${apartment.complexId}`} className="inline-flex items-center gap-1.5 text-sm font-bold text-slate-500 hover:text-slate-900"><ArrowLeft size={16} /> {apartment.complexName}</Link>
+        <Link to={apartmentHref(apartment.complexId, { sourceId, runId })} className="inline-flex items-center gap-1.5 text-sm font-bold text-slate-500 hover:text-slate-900"><ArrowLeft size={16} /> {apartment.complexName}</Link>
         <div className="mt-5 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
           <div>
             <div className="flex flex-wrap items-center gap-2"><ChangeBadge status={listing.status} /><span className="text-sm font-extrabold text-slate-500">{tradeTypeLabels[listing.tradeType]}</span><span className="rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-extrabold text-emerald-700">중개사 통합 매물</span></div>

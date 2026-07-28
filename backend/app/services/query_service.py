@@ -107,11 +107,11 @@ def camelize_json(value: Any, *, source_key: str | None = None) -> Any:
 
 
 class QueryService:
-    def __init__(self, session: AsyncSession) -> None:
+    def __init__(self, session: AsyncSession, actor_user_id: UUID) -> None:
         self.session = session
+        self.actor_user_id = actor_user_id
 
-    @staticmethod
-    def _ranked_apartment_snapshots():
+    def _ranked_apartment_snapshots(self):
         ordering = (
             func.coalesce(CrawlRun.finished_at, ApartmentSnapshot.captured_at).desc(),
             ApartmentSnapshot.captured_at.desc(),
@@ -121,19 +121,25 @@ class QueryService:
                 ApartmentSnapshot.id.label("snapshot_id"),
                 func.row_number()
                 .over(
-                    partition_by=ApartmentSnapshot.apartment_id,
+                    partition_by=(
+                        CrawlRun.source_id,
+                        ApartmentSnapshot.apartment_id,
+                    ),
                     order_by=ordering,
                 )
                 .label("snapshot_rank"),
             )
             .join(CrawlRun, CrawlRun.id == ApartmentSnapshot.run_id)
-            .where(CrawlRun.status.in_(RESULT_STATUSES))
+            .join(TrackedSource, TrackedSource.id == CrawlRun.source_id)
+            .where(
+                CrawlRun.status.in_(RESULT_STATUSES),
+                TrackedSource.owner_user_id == self.actor_user_id,
+            )
             .subquery()
         )
 
-    @classmethod
-    def _latest_apartment_statement(cls) -> Select:
-        ranked = cls._ranked_apartment_snapshots()
+    def _latest_apartment_statement(self) -> Select:
+        ranked = self._ranked_apartment_snapshots()
         return (
             select(Apartment, ApartmentSnapshot, CrawlRun, TrackedSource)
             .select_from(ranked)
@@ -141,7 +147,10 @@ class QueryService:
             .join(Apartment, Apartment.id == ApartmentSnapshot.apartment_id)
             .join(CrawlRun, CrawlRun.id == ApartmentSnapshot.run_id)
             .join(TrackedSource, TrackedSource.id == CrawlRun.source_id)
-            .where(ranked.c.snapshot_rank == 1)
+            .where(
+                ranked.c.snapshot_rank == 1,
+                TrackedSource.owner_user_id == self.actor_user_id,
+            )
         )
 
     async def _latest_result(
@@ -157,7 +166,10 @@ class QueryService:
             .join(Apartment, Apartment.id == ApartmentSnapshot.apartment_id)
             .join(CrawlRun, CrawlRun.id == ApartmentSnapshot.run_id)
             .join(TrackedSource, TrackedSource.id == CrawlRun.source_id)
-            .where(CrawlRun.status.in_(RESULT_STATUSES))
+            .where(
+                CrawlRun.status.in_(RESULT_STATUSES),
+                TrackedSource.owner_user_id == self.actor_user_id,
+            )
         )
         if complex_id is not None:
             statement = statement.where(Apartment.naver_complex_id == complex_id)
@@ -231,9 +243,13 @@ class QueryService:
         normalized_query = (query or "").strip()
         if normalized_query:
             pattern = f"%{normalized_query}%"
+            snapshot_name = ApartmentSnapshot.details_json["name"].as_string()
+            snapshot_address = ApartmentSnapshot.details_json[
+                "address"
+            ].as_string()
             predicate = or_(
-                Apartment.name.ilike(pattern),
-                Apartment.address.ilike(pattern),
+                snapshot_name.ilike(pattern),
+                snapshot_address.ilike(pattern),
                 Apartment.naver_complex_id.ilike(pattern),
             )
             statement = statement.where(predicate)
@@ -254,8 +270,12 @@ class QueryService:
         )
 
     async def history(
-        self, complex_id: str, *, source_id: UUID | None = None
+        self, complex_id: str, *, source_id: UUID
     ) -> list[ApartmentHistoryPoint]:
+        await self._latest_result(
+            complex_id=complex_id,
+            source_id=source_id,
+        )
         apartment = await self.session.scalar(
             select(Apartment).where(Apartment.naver_complex_id == complex_id)
         )
@@ -329,7 +349,7 @@ class QueryService:
         complex_id: str,
         *,
         run_id: UUID | None = None,
-        source_id: UUID | None = None,
+        source_id: UUID,
     ) -> ApartmentDetail:
         row = await self._latest_result(
             complex_id=complex_id,
@@ -644,12 +664,13 @@ class QueryService:
         self,
         complex_id: str,
         *,
+        source_id: UUID,
         run_id: UUID | None,
         trade_type: str | None,
         status: str | None,
     ) -> ListingPage:
         apartment, apartment_snapshot, run, _ = await self._latest_result(
-            complex_id=complex_id, run_id=run_id
+            complex_id=complex_id, source_id=source_id, run_id=run_id
         )
         rows = await self._listing_rows_for_run(
             apartment_id=apartment.id, selected_run=run
@@ -708,7 +729,14 @@ class QueryService:
     async def _broker_registrations_for_run(
         self, *, group_id: UUID, run_id: UUID
     ) -> list[BrokerRegistration]:
-        selected_run = await self.session.get(CrawlRun, run_id)
+        selected_run = await self.session.scalar(
+            select(CrawlRun)
+            .join(TrackedSource, TrackedSource.id == CrawlRun.source_id)
+            .where(
+                CrawlRun.id == run_id,
+                TrackedSource.owner_user_id == self.actor_user_id,
+            )
+        )
         if selected_run is None:
             raise QueryNotFoundError("조사 회차를 찾을 수 없습니다.")
         rows = (
@@ -719,9 +747,11 @@ class QueryService:
                     BrokerArticle,
                     BrokerArticle.id == BrokerArticleSnapshot.broker_article_id,
                 )
+                .join(CrawlRun, CrawlRun.id == BrokerArticleSnapshot.run_id)
                 .where(
                     BrokerArticle.listing_group_id == group_id,
                     BrokerArticleSnapshot.run_id == run_id,
+                    CrawlRun.source_id == selected_run.source_id,
                 )
                 .order_by(BrokerArticle.provider.asc(), BrokerArticle.naver_article_id.asc())
             )
@@ -865,7 +895,11 @@ class QueryService:
         )
 
     async def listing(
-        self, listing_group_id: UUID, *, run_id: UUID | None = None
+        self,
+        listing_group_id: UUID,
+        *,
+        source_id: UUID,
+        run_id: UUID | None = None,
     ) -> ListingDetail:
         apartment = await self.session.scalar(
             select(Apartment)
@@ -875,7 +909,9 @@ class QueryService:
         if apartment is None:
             raise QueryNotFoundError("매물을 찾을 수 없습니다.")
         _, apartment_snapshot, selected_run, _ = await self._latest_result(
-            complex_id=apartment.naver_complex_id, run_id=run_id
+            complex_id=apartment.naver_complex_id,
+            source_id=source_id,
+            run_id=run_id,
         )
         rows = await self._listing_rows_for_run(
             apartment_id=apartment.id,
@@ -944,10 +980,13 @@ class QueryService:
     async def dashboard(self, source_id: UUID | None) -> DashboardResponse:
         apartment, snapshot, run, source = await self._latest_result(source_id=source_id)
         apartment_detail = await self.apartment(
-            apartment.naver_complex_id, run_id=run.id
+            apartment.naver_complex_id,
+            source_id=source.id,
+            run_id=run.id,
         )
         listing_page = await self.listings(
             apartment.naver_complex_id,
+            source_id=source.id,
             run_id=run.id,
             trade_type=None,
             status=None,

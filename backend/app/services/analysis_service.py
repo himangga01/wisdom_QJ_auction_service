@@ -18,7 +18,7 @@ TERMINAL_STATUSES = ("completed", "partial", "failed", "blocked", "cancelled")
 
 
 class AnalysisNotFoundError(LookupError):
-    code = "analysis_not_found"
+    code = "dataset_not_found"
 
 
 class AnalysisNotReadyError(RuntimeError):
@@ -60,9 +60,16 @@ class AnalysisService:
         self.session = session
         self.dispatcher = dispatcher
 
-    async def _source_by_hash(self, url_hash: str) -> TrackedSource | None:
+    async def _source_by_hash(
+        self,
+        actor_user_id: UUID,
+        url_hash: str,
+    ) -> TrackedSource | None:
         return await self.session.scalar(
-            select(TrackedSource).where(TrackedSource.url_hash == url_hash)
+            select(TrackedSource).where(
+                TrackedSource.owner_user_id == actor_user_id,
+                TrackedSource.url_hash == url_hash,
+            )
         )
 
     async def _active_run(self, source_id: UUID) -> CrawlRun | None:
@@ -74,12 +81,6 @@ class AnalysisService:
             )
             .order_by(CrawlRun.created_at.desc())
         )
-
-    async def _concurrent_active_run(self, url_hash: str) -> CrawlRun | None:
-        source = await self._source_by_hash(url_hash)
-        if source is None:
-            return None
-        return await self._active_run(source.id)
 
     @staticmethod
     def _deduplicated_run(
@@ -96,32 +97,13 @@ class AnalysisService:
             )
         return active_run, False
 
-    async def create(
+    async def _create_for_source(
         self,
-        source_url: str,
+        source: TrackedSource,
         *,
-        collect_broker_details: bool = True,
-        interaction_delay_preset: InteractionDelayPreset = (
-            DEFAULT_INTERACTION_DELAY_PRESET
-        ),
+        collect_broker_details: bool,
+        interaction_delay_preset: InteractionDelayPreset,
     ) -> tuple[CrawlRun, bool]:
-        identity = normalize_source_url(source_url)
-        source = await self._source_by_hash(identity.url_hash)
-        if source is None:
-            source = TrackedSource(
-                source_url=identity.source_url,
-                normalized_url=identity.normalized_url,
-                url_hash=identity.url_hash,
-            )
-            self.session.add(source)
-            try:
-                await self.session.flush()
-            except IntegrityError:
-                await self.session.rollback()
-                source = await self._source_by_hash(identity.url_hash)
-                if source is None:
-                    raise
-
         active_run = await self._active_run(source.id)
         if active_run is not None:
             return self._deduplicated_run(
@@ -143,7 +125,7 @@ class AnalysisService:
             await self.session.commit()
         except IntegrityError:
             await self.session.rollback()
-            active_run = await self._concurrent_active_run(identity.url_hash)
+            active_run = await self._active_run(source.id)
             if active_run is None:
                 raise
             return self._deduplicated_run(
@@ -163,16 +145,84 @@ class AnalysisService:
             raise QueueUnavailableError("조사 작업 큐에 연결할 수 없습니다.") from exc
         return run, True
 
-    async def get(self, run_id: UUID) -> CrawlRun:
-        run = await self.session.get(CrawlRun, run_id)
+    async def create_for_user(
+        self,
+        actor_user_id: UUID,
+        source_url: str,
+        *,
+        collect_broker_details: bool = True,
+        interaction_delay_preset: InteractionDelayPreset = (
+            DEFAULT_INTERACTION_DELAY_PRESET
+        ),
+    ) -> tuple[CrawlRun, bool]:
+        identity = normalize_source_url(source_url)
+        source = await self._source_by_hash(actor_user_id, identity.url_hash)
+        if source is None:
+            source = TrackedSource(
+                source_url=identity.source_url,
+                normalized_url=identity.normalized_url,
+                url_hash=identity.url_hash,
+                owner_user_id=actor_user_id,
+            )
+            self.session.add(source)
+            try:
+                await self.session.flush()
+            except IntegrityError:
+                await self.session.rollback()
+                source = await self._source_by_hash(
+                    actor_user_id,
+                    identity.url_hash,
+                )
+                if source is None:
+                    raise
+        return await self._create_for_source(
+            source,
+            collect_broker_details=collect_broker_details,
+            interaction_delay_preset=interaction_delay_preset,
+        )
+
+    async def create_for_source(
+        self,
+        source_id: UUID,
+        *,
+        collect_broker_details: bool = True,
+        interaction_delay_preset: InteractionDelayPreset = (
+            DEFAULT_INTERACTION_DELAY_PRESET
+        ),
+    ) -> tuple[CrawlRun, bool]:
+        source = await self.session.scalar(
+            select(TrackedSource).where(
+                TrackedSource.id == source_id,
+                TrackedSource.is_active.is_(True),
+            )
+        )
+        if source is None:
+            raise AnalysisNotFoundError("조사 source를 찾을 수 없습니다.")
+        return await self._create_for_source(
+            source,
+            collect_broker_details=collect_broker_details,
+            interaction_delay_preset=interaction_delay_preset,
+        )
+
+    async def get(self, actor_user_id: UUID, run_id: UUID) -> CrawlRun:
+        run = await self.session.scalar(
+            select(CrawlRun)
+            .join(TrackedSource, TrackedSource.id == CrawlRun.source_id)
+            .where(
+                CrawlRun.id == run_id,
+                TrackedSource.owner_user_id == actor_user_id,
+            )
+        )
         if run is None:
             raise AnalysisNotFoundError("분석 작업을 찾을 수 없습니다.")
         return run
 
     async def result(
-        self, run_id: UUID
+        self,
+        actor_user_id: UUID,
+        run_id: UUID,
     ) -> tuple[CrawlRun, Apartment, ApartmentSnapshot]:
-        run = await self.get(run_id)
+        run = await self.get(actor_user_id, run_id)
         if run.status not in ("completed", "partial"):
             raise AnalysisNotReadyError("분석 작업이 아직 완료되지 않았습니다.")
 
@@ -187,8 +237,8 @@ class AnalysisService:
             raise AnalysisNotReadyError("완료된 아파트 결과가 없습니다.")
         return run, row[0], row[1]
 
-    async def cancel(self, run_id: UUID) -> CrawlRun:
-        run = await self.get(run_id)
+    async def cancel(self, actor_user_id: UUID, run_id: UUID) -> CrawlRun:
+        run = await self.get(actor_user_id, run_id)
         if run.status != "queued":
             raise AnalysisCannotCancelError("대기 중인 작업만 취소할 수 있습니다.")
         self.dispatcher.cancel(run.id)

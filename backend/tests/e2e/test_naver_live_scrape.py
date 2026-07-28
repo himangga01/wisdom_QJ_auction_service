@@ -10,16 +10,46 @@ import pytest
 
 from app.crawler.errors import BlockedCrawlError
 from tests.e2e.comparison import ComparisonReport, compare_case
-from tests.e2e.reference_schema import GptCaseObservation, load_reference
+from tests.e2e.artifact_safety import (
+    safe_case_artifact_path,
+    write_artifact_json,
+)
+from tests.e2e.reference_loader import (
+    GptCaseObservation,
+    load_manifest,
+    load_reference,
+    source_url_for_case,
+)
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
-SAMPLED_REFERENCE_PATH = (
-    Path(__file__).parent / "reference" / "gpt_naver_observations.json"
+CURRENT_REFERENCE_PATH = Path(
+    os.getenv(
+        "GPT_NAVER_REFERENCE_PATH",
+        str(
+            REPOSITORY_ROOT
+            / "temp"
+            / "e2e"
+            / "reference"
+            / "current"
+            / "reference.json"
+        ),
+    )
+)
+LOCAL_MANIFEST_PATH = Path(
+    os.getenv(
+        "GPT_NAVER_CASE_MANIFEST_PATH",
+        str(
+            REPOSITORY_ROOT
+            / "temp"
+            / "e2e"
+            / "reference"
+            / "case-manifest.local.json"
+        ),
+    )
 )
 DIFF_ROOT = REPOSITORY_ROOT / "temp" / "e2e" / "naver-live"
 REFERENCE_MAX_AGE = timedelta(minutes=30)
-SAMPLED_CASE_IDS = ("case-131197", "case-155817", "case-22746")
 
 
 def _fail_e2e_blocked(exc: BlockedCrawlError) -> None:
@@ -27,18 +57,28 @@ def _fail_e2e_blocked(exc: BlockedCrawlError) -> None:
 
 
 @cache
-def _load_sampled_reference():
+def _load_current_reference():
     return load_reference(
-        SAMPLED_REFERENCE_PATH,
+        CURRENT_REFERENCE_PATH,
         now=datetime.now(timezone.utc),
         max_age=REFERENCE_MAX_AGE,
     )
 
 
-def _load_sampled_case(case_id: str) -> GptCaseObservation:
-    reference = _load_sampled_reference()
-    assert reference.mode == "sample"
-    return next(case for case in reference.cases if case.case_id == case_id)
+@cache
+def _load_local_manifest():
+    return load_manifest(LOCAL_MANIFEST_PATH)
+
+
+def _load_live_case(case_id: str) -> tuple[GptCaseObservation, str]:
+    reference = _load_current_reference()
+    expected = next(
+        (case for case in reference.cases if case.case_id == case_id),
+        None,
+    )
+    assert expected is not None, "requested case ID is absent from reference"
+    source_url = source_url_for_case(_load_local_manifest(), case_id)
+    return expected, source_url
 
 
 def _collector():
@@ -53,9 +93,7 @@ def _collector():
     return PlaywrightNaverLandCollector(
         settings=Settings(
             app_runtime="local",
-            crawler_browser_mode="external_chrome",
             crawler_cdp_url=cdp_url,
-            crawler_headless=False,
             _env_file=None,
         ),
         delay=HumanizedDelay(1.0, 3.0),
@@ -76,9 +114,7 @@ def _counting_collector():
             super().__init__(
                 settings=Settings(
                     app_runtime="local",
-                    crawler_browser_mode="external_chrome",
                     crawler_cdp_url=cdp_url,
-                    crawler_headless=False,
                     _env_file=None,
                 ),
                 delay=HumanizedDelay(1.0, 3.0),
@@ -93,9 +129,13 @@ def _counting_collector():
 
 
 def _write_diff(report: ComparisonReport) -> Path:
-    diff_path = DIFF_ROOT / report.case_id / "diff.json"
+    diff_path = safe_case_artifact_path(
+        DIFF_ROOT,
+        report.case_id,
+        "diff.json",
+    )
     diff_path.parent.mkdir(parents=True, exist_ok=True)
-    diff_path.write_text(report.model_dump_json(indent=2), encoding="utf-8")
+    write_artifact_json(diff_path, report.model_dump(mode="json"))
     return diff_path
 
 
@@ -104,16 +144,18 @@ def _write_diff(report: ComparisonReport) -> Path:
     os.getenv("RUN_LIVE_NAVER_E2E") != "1",
     reason="set RUN_LIVE_NAVER_E2E=1 to run sampled Naver live E2E",
 )
-@pytest.mark.parametrize("case_id", SAMPLED_CASE_IDS)
-def test_sampled_naver_live_scrape(case_id: str) -> None:
+def test_sampled_naver_live_scrape() -> None:
     from app.crawler.scope import CrawlScope
 
-    expected = _load_sampled_case(case_id)
+    case_id = os.getenv("NAVER_E2E_CASE_ID")
+    assert case_id, "NAVER_E2E_CASE_ID is required"
+    expected, source_url = _load_live_case(case_id)
+    assert _load_current_reference().mode == "sample"
     article_ids = {article.article_id for article in expected.articles}
     try:
         actual = asyncio.run(
             _collector().collect(
-                expected.source_url,
+                source_url,
                 scope=CrawlScope.sampled(article_ids),
             )
         )
@@ -133,23 +175,19 @@ def test_sampled_naver_live_scrape(case_id: str) -> None:
 def test_full_naver_live_scrape() -> None:
     from app.crawler.scope import CrawlScope
 
-    reference_path = os.getenv("GPT_NAVER_FULL_REFERENCE_PATH")
-    assert reference_path is not None, (
-        "GPT_NAVER_FULL_REFERENCE_PATH is required for exhaustive live E2E"
-    )
-    reference = load_reference(
-        Path(reference_path),
-        now=datetime.now(timezone.utc),
-        max_age=REFERENCE_MAX_AGE,
-    )
+    reference = _load_current_reference()
     assert reference.mode == "full"
 
     async def collect_and_compare() -> None:
         collector = _collector()
         for expected in reference.cases:
+            source_url = source_url_for_case(
+                _load_local_manifest(),
+                expected.case_id,
+            )
             try:
                 actual = await collector.collect(
-                    expected.source_url,
+                    source_url,
                     scope=CrawlScope.full(),
                 )
             except BlockedCrawlError as exc:
@@ -169,10 +207,9 @@ def test_full_naver_live_scrape() -> None:
 def test_one_apartment_detail_collection_on_and_off() -> None:
     from app.crawler.scope import CrawlScope
 
-    source_url = os.getenv("NAVER_OPTION_E2E_SOURCE_URL")
-    assert source_url is not None, (
-        "NAVER_OPTION_E2E_SOURCE_URL is required for the one-apartment option E2E"
-    )
+    case_id = os.getenv("NAVER_E2E_CASE_ID")
+    assert case_id, "NAVER_E2E_CASE_ID is required"
+    _, source_url = _load_live_case(case_id)
 
     async def collect_both_modes() -> None:
         off_collector = _counting_collector()

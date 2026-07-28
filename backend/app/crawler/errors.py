@@ -34,3 +34,7 @@ class IncompleteListingCollectionError(CrawlError):
 
 class BrowserUnavailableError(CrawlError):
     code = "browser_unavailable"
+
+
+class BrowserDisconnectedError(CrawlError):
+    code = "browser_disconnected"

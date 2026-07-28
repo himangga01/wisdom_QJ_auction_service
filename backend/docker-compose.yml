@@ -1,35 +1,106 @@
-# 레거시 백엔드 개발용 구성입니다.
-# 전체 서비스는 저장소 루트의 docker-compose.production.yml을 사용하세요.
-# Legacy backend-only development compose. Use ../docker-compose.production.yml for the full service.
+# 백엔드 개발용 구성입니다. Chrome CDP 계약은 루트 production Compose와 같습니다.
+# Backend development compose. The Chrome CDP contract matches the root production compose.
 
 services:
-  api:
-    build: .
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
-    env_file: .env
-    ports: ["8000:8000"]
-    depends_on: [postgres, redis]
-  worker:
-    build: .
-    command: celery -A app.tasks.crawl_tasks.celery_app worker --loglevel=info --concurrency=1
-    env_file: .env
-    depends_on: [postgres, redis]
-  scheduler:
-    build: .
-    command: celery -A app.tasks.crawl_tasks.celery_app beat --loglevel=info
-    env_file: .env
-    depends_on: [postgres, redis]
   postgres:
     image: postgres:16-alpine
     environment:
       POSTGRES_DB: wisdom_auction
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
-    volumes: ["postgres_data:/var/lib/postgresql/data"]
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d wisdom_auction"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   redis:
     image: redis:7-alpine
-    volumes: ["redis_data:/data"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  chrome:
+    build:
+      context: ../docker/chrome
+      dockerfile: Dockerfile
+      args:
+        GOOGLE_CHROME_VERSION: ${GOOGLE_CHROME_VERSION:-}
+    image: wisdom-qj-auction-chrome:${CHROME_IMAGE_TAG:-stable}
+    init: true
+    restart: unless-stopped
+    shm_size: 1gb
+    expose:
+      - "9222"
+    volumes:
+      - chrome_profile:/var/lib/chrome/profile
+    networks:
+      - crawler_control
+      - browser_egress
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/check-cdp.sh"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+
+  api:
+    build: .
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+    env_file: .env
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - default
+      - crawler_control
+
+  worker:
+    build: .
+    command: celery -A app.tasks.crawl_tasks.celery_app worker --loglevel=info --concurrency=1
+    env_file: .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      chrome:
+        condition: service_healthy
+    networks:
+      - default
+      - crawler_control
+
+  scheduler:
+    build: .
+    command: celery -A app.tasks.crawl_tasks.celery_app beat --loglevel=info
+    env_file: .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      chrome:
+        condition: service_healthy
+    networks:
+      - default
+      - crawler_control
 
 volumes:
   postgres_data:
   redis_data:
+  chrome_profile:
+
+networks:
+  crawler_control:
+    internal: true
+  browser_egress:

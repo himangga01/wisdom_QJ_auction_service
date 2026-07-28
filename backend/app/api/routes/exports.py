@@ -8,14 +8,19 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_session
+from app.api.dependencies.auth import current_user
+from app.models import User
 from app.services.export_service import ExportNotFoundError, ExportService
 
 router = APIRouter(prefix="/exports", tags=["exports"])
 XLSX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 
-def service(session: Annotated[AsyncSession, Depends(get_session)]) -> ExportService:
-    return ExportService(session)
+def service(
+    session: Annotated[AsyncSession, Depends(get_session)],
+    user: Annotated[User, Depends(current_user)],
+) -> ExportService:
+    return ExportService(session, user.id)
 
 
 @router.get("/{source_id}.xlsx")
@@ -47,4 +52,3 @@ async def export_source(
             "Cache-Control": "no-store",
         },
     )
-

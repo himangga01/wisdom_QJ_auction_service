@@ -30,14 +30,13 @@ def test_runtime_rejects_unknown_value() -> None:
 def test_local_crawler_runtime_defaults_to_project_loopback_chrome() -> None:
     settings = Settings(app_runtime="local", _env_file=None)
 
-    assert settings.crawler_browser_mode == "external_chrome"
     assert settings.crawler_cdp_url == "http://127.0.0.1:42973"
 
 
-def test_docker_crawler_runtime_defaults_to_playwright() -> None:
+def test_docker_crawler_runtime_defaults_to_compose_chrome() -> None:
     settings = Settings(app_runtime="docker", _env_file=None)
 
-    assert settings.crawler_browser_mode == "playwright"
+    assert settings.crawler_cdp_url == "http://chrome:9222"
 
 
 def test_crawler_fallback_delay_matches_normal_preset() -> None:
@@ -49,39 +48,40 @@ def test_crawler_fallback_delay_matches_normal_preset() -> None:
     ) == (1.0, 2.5)
 
 
-def test_local_crawler_runtime_preserves_explicit_playwright_mode() -> None:
-    settings = Settings(
-        app_runtime="local",
-        crawler_browser_mode="playwright",
-        _env_file=None,
-    )
-
-    assert settings.crawler_browser_mode == "playwright"
-
-
-def test_crawler_runtime_rejects_unknown_browser_mode() -> None:
+def test_bootstrap_token_rejects_the_committed_placeholder() -> None:
     with pytest.raises(ValidationError):
-        Settings(crawler_browser_mode="remote_chrome", _env_file=None)
+        Settings(
+            auth_bootstrap_token="replace-with-at-least-32-random-bytes",
+            _env_file=None,
+        )
 
 
 @pytest.mark.parametrize(
-    "cdp_url",
+    ("app_runtime", "cdp_url"),
     [
-        "https://127.0.0.1:42973",
-        "http://localhost:42973",
-        "http://0.0.0.0:42973",
-        "http://127.0.0.1",
-        "http://user:password@127.0.0.1:42973",
-        "http://127.0.0.1:42973/json/version",
-        "http://127.0.0.1:42973?token=secret",
-        "http://127.0.0.1:42973#fragment",
+        ("local", "https://127.0.0.1:42973"),
+        ("local", "http://localhost:42973"),
+        ("local", "http://127.0.0.1:9222"),
+        ("local", "http://127.0.0.1"),
+        ("local", "http://user:password@127.0.0.1:42973"),
+        ("local", "http://127.0.0.1:42973/json/version"),
+        ("local", "http://127.0.0.1:42973?token=secret"),
+        ("local", "http://127.0.0.1:42973#fragment"),
+        ("docker", "http://127.0.0.1:42973"),
+        ("docker", "http://chrome:42973"),
+        ("docker", "http://other:9222"),
     ],
 )
-def test_crawler_runtime_rejects_non_loopback_or_non_base_cdp_url(
+def test_crawler_runtime_rejects_endpoint_outside_runtime_contract(
+    app_runtime: str,
     cdp_url: str,
 ) -> None:
     with pytest.raises(ValidationError):
-        Settings(crawler_cdp_url=cdp_url, _env_file=None)
+        Settings(
+            app_runtime=app_runtime,
+            crawler_cdp_url=cdp_url,
+            _env_file=None,
+        )
 
 
 class RecordingCursor:
@@ -123,5 +123,7 @@ def test_local_health_does_not_require_redis(monkeypatch: pytest.MonkeyPatch) ->
     )
 
     assert asyncio.run(health_route.redis_status()) == "not_required"
-    response = asyncio.run(health_route.health("connected", "not_required"))
+    response = asyncio.run(
+        health_route.health("connected", "not_required", "ready")
+    )
     assert response.status == "ok"

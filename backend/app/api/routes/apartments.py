@@ -5,6 +5,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_session
+from app.api.dependencies.auth import current_user
+from app.models import User
 from app.schemas.apartment import ApartmentDetail, ApartmentHistoryPoint, ApartmentPage
 from app.schemas.listing import ListingPage
 from app.services.query_service import QueryNotFoundError, QueryService
@@ -12,8 +14,11 @@ from app.services.query_service import QueryNotFoundError, QueryService
 router = APIRouter(prefix="/apartments", tags=["apartments"])
 
 
-def service(session: Annotated[AsyncSession, Depends(get_session)]) -> QueryService:
-    return QueryService(session)
+def service(
+    session: Annotated[AsyncSession, Depends(get_session)],
+    user: Annotated[User, Depends(current_user)],
+) -> QueryService:
+    return QueryService(session, user.id)
 
 
 def not_found(error: QueryNotFoundError) -> HTTPException:
@@ -39,8 +44,8 @@ async def get_apartments(
 async def get_apartment(
     complex_id: str,
     query_service: Annotated[QueryService, Depends(service)],
+    source_id: Annotated[UUID, Query(alias="sourceId")],
     run_id: Annotated[UUID | None, Query(alias="runId")] = None,
-    source_id: Annotated[UUID | None, Query(alias="sourceId")] = None,
 ) -> ApartmentDetail:
     try:
         return await query_service.apartment(
@@ -56,7 +61,7 @@ async def get_apartment(
 async def get_apartment_history(
     complex_id: str,
     query_service: Annotated[QueryService, Depends(service)],
-    source_id: Annotated[UUID | None, Query(alias="sourceId")] = None,
+    source_id: Annotated[UUID, Query(alias="sourceId")],
 ) -> list[ApartmentHistoryPoint]:
     try:
         return await query_service.history(complex_id, source_id=source_id)
@@ -68,6 +73,7 @@ async def get_apartment_history(
 async def get_apartment_listings(
     complex_id: str,
     query_service: Annotated[QueryService, Depends(service)],
+    source_id: Annotated[UUID, Query(alias="sourceId")],
     run_id: Annotated[UUID | None, Query(alias="runId")] = None,
     trade_type: Annotated[
         Literal["sale", "jeonse", "monthly"] | None,
@@ -81,6 +87,7 @@ async def get_apartment_listings(
     try:
         return await query_service.listings(
             complex_id,
+            source_id=source_id,
             run_id=run_id,
             trade_type=trade_type,
             status=listing_status,

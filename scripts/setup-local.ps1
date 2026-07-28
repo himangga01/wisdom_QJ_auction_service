@@ -8,6 +8,10 @@ $ErrorActionPreference = 'Stop'
 
 Initialize-LocalRuntimeDirectories
 
+if ($null -eq (Find-InstalledGoogleChrome)) {
+    throw 'Google Chrome이 필요합니다. 공식 설치 프로그램으로 Chrome을 설치한 뒤 다시 실행하세요.'
+}
+
 $launcher = Get-Command py.exe -ErrorAction SilentlyContinue
 $launcherArguments = @('-3')
 if ($null -eq $launcher) {
@@ -87,4 +91,6 @@ Invoke-CheckedCommand `
 
 Write-Host ''
 Write-Host '로컬 실행 준비가 완료되었습니다.'
+Write-Host "최초 관리자 설정용 bootstrap token 파일: $LocalBootstrapTokenPath"
+Write-Host "확인 명령: Get-Content -LiteralPath '$LocalBootstrapTokenPath'"
 Write-Host '다음 명령: .\scripts\start.ps1 -Mode local'

@@ -1,11 +1,13 @@
 import { act, render, renderHook, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import App from '../App'
 import { RegistrationCard } from '../pages/ListingDetailPage'
 import { demoDashboardDataset } from '../mocks/demoRealEstate'
 import { useDemoDashboard } from '../state/useDemoDashboard'
+import { USE_DEMO_DATA } from '../state/AnalysisProvider'
+import { router } from '../app/router'
 
 const VALID_DEMO_URL = 'https://fin.land.naver.com/map?demo=true'
 
@@ -23,21 +25,75 @@ function renderApp() {
 }
 
 describe('App', () => {
-  it('renders the Korean real-estate dashboard shell', () => {
+  beforeEach(async () => {
+    vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request) => {
+      const url = String(input)
+      if (url.endsWith('/auth/bootstrap-status')) {
+        return new Response(JSON.stringify({ bootstrapRequired: false }), {
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+      if (url.endsWith('/auth/me')) {
+        return new Response(JSON.stringify({
+          user: {
+            id: '1e82d03f-8c33-4d03-bec3-e7656f1c8696',
+            email: 'admin@example.com',
+            displayName: '관리자',
+            role: 'admin',
+          },
+          expiresAt: '2026-07-29T20:00:00+09:00',
+        }), {
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+      throw new TypeError(`test has no API fixture for ${url}`)
+    }))
+    await router.navigate('/')
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('renders the Korean real-estate dashboard shell', async () => {
     renderApp()
 
-    expect(screen.getByText('집계뷰')).toBeInTheDocument()
-    expect(screen.getByLabelText('네이버 부동산 URL')).toBeInTheDocument()
+    expect(await screen.findByText('집계뷰')).toBeInTheDocument()
+    expect(screen.getByLabelText('네이버 부동산 URL')).toHaveValue('')
     expect(
       screen.getByRole('checkbox', {
         name: /중개사 등록 물건 추가 상세정보 수집/,
       }),
     ).toBeChecked()
     expect(screen.getByRole('button', { name: '분석 시작' })).toBeInTheDocument()
+    expect(
+      screen.getByText(
+        USE_DEMO_DATA
+          ? 'DEMO · 샘플 데이터 모드'
+          : '실데이터 · 서버 데이터 모드',
+      ),
+    ).toBeInTheDocument()
+    expect(screen.queryByText('프런트엔드 UX 프리뷰')).not.toBeInTheDocument()
+    expect(
+      screen.queryByText(/실제 네이버 부동산 데이터와 연결되지 않은/),
+    ).not.toBeInTheDocument()
     expect(screen.queryByText('단지별 평균 호가')).not.toBeInTheDocument()
   })
 
-  it('rejects non-Naver real-estate URLs', async () => {
+  it('shows a dedicated page for an unknown client route', async () => {
+    renderApp()
+    await router.navigate('/does-not-exist')
+
+    expect(
+      await screen.findByRole('heading', { name: '페이지를 찾을 수 없습니다' }),
+    ).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'URL 조사로 돌아가기' })).toHaveAttribute(
+      'href',
+      '/',
+    )
+  })
+
+  it.skipIf(!USE_DEMO_DATA)('rejects non-Naver real-estate URLs', async () => {
     const user = userEvent.setup()
     renderApp()
 
@@ -51,7 +107,7 @@ describe('App', () => {
     )
   })
 
-  it('completes the demo analysis flow for a valid URL', async () => {
+  it.skipIf(!USE_DEMO_DATA)('completes the demo analysis flow for a valid URL', async () => {
     const user = userEvent.setup()
     renderApp()
 
@@ -88,7 +144,7 @@ describe('App', () => {
     expect(screen.queryByText('3.3㎡당')).not.toBeInTheDocument()
   })
 
-  it('saves the selected Chrome delay preset in the demo schedule summary', async () => {
+  it.skipIf(!USE_DEMO_DATA)('saves the selected Chrome delay preset in the demo schedule summary', async () => {
     const user = userEvent.setup()
     renderApp()
 

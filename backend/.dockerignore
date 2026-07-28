@@ -1,0 +1,13 @@
+.env
+.env.*
+!.env.example
+!.env.local.example
+data/
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+tests/e2e/artifacts/
+tests/e2e/reference/current/

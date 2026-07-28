@@ -1,5 +1,8 @@
-import { BarChart3, Building2, CalendarClock, Link2, Sparkles } from 'lucide-react'
+import { BarChart3, Building2, CalendarClock, Link2, LogOut, UserCog, UserRound } from 'lucide-react'
 import { NavLink } from 'react-router-dom'
+import { useAuth } from '../../state/AuthProvider'
+import { RuntimeModeStatus } from './RuntimeModeStatus'
+import { NotificationBell } from '../notifications/NotificationBell'
 
 const navigation = [
   { to: '/', label: 'URL 조사', icon: Link2, end: true },
@@ -9,6 +12,8 @@ const navigation = [
 ]
 
 export function PortalHeader() {
+  const auth = useAuth()
+
   return (
     <header className="sticky top-0 z-40 border-b border-slate-200/80 bg-white/95 backdrop-blur">
       <div className="mx-auto flex h-16 max-w-[1440px] items-center gap-7 px-5 lg:px-8">
@@ -37,10 +42,34 @@ export function PortalHeader() {
         </nav>
 
         <div className="ml-auto flex items-center gap-2">
-          <span className="hidden text-xs font-medium text-slate-400 sm:inline">프런트엔드 UX 프리뷰</span>
-          <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-extrabold text-emerald-700">
-            <Sparkles size={13} /> DEMO
-          </span>
+          <RuntimeModeStatus />
+          <NotificationBell />
+          {auth.user?.role === 'admin' ? (
+            <NavLink
+              to="/admin/users"
+              className="hidden items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-bold text-slate-600 hover:bg-slate-100 lg:flex"
+            >
+              <UserCog size={16} /> 사용자 관리
+            </NavLink>
+          ) : null}
+          <NavLink
+            to="/account"
+            aria-label="계정 메뉴"
+            className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-700"
+          >
+            <UserRound size={16} />
+            <span className="hidden max-w-32 truncate sm:inline">{auth.user?.displayName}</span>
+          </NavLink>
+          {!auth.isDemo ? (
+            <button
+              type="button"
+              onClick={() => void auth.logout()}
+              className="grid size-9 place-items-center rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-900"
+              aria-label="로그아웃"
+            >
+              <LogOut size={17} />
+            </button>
+          ) : null}
         </div>
       </div>
 
@@ -57,6 +86,16 @@ export function PortalHeader() {
             <Icon size={14} /> {label}
           </NavLink>
         ))}
+        {auth.user?.role === 'admin' ? (
+          <NavLink
+            to="/admin/users"
+            className={({ isActive }) =>
+              `flex shrink-0 items-center gap-1.5 rounded-lg px-3 py-2 text-xs ${isActive ? 'bg-slate-900 font-bold text-white' : 'font-semibold text-slate-500'}`
+            }
+          >
+            <UserCog size={14} /> 사용자 관리
+          </NavLink>
+        ) : null}
       </nav>
     </header>
   )

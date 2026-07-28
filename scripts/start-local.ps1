@@ -64,8 +64,9 @@ try {
     $apiStarted = $true
     Write-RecordedProcessId -PidFile $ApiPidFile -ProcessId $apiProcess.Id
 
-    if (-not (Wait-LocalPortOpen -Port $ApiPort -TimeoutSeconds 20)) {
-        throw "API가 제한 시간 안에 포트 $ApiPort 을(를) 열지 못했습니다. 로그: $apiErrorLog"
+    $apiHealth = Wait-ApiHealth -TimeoutSeconds 20
+    if ($null -eq $apiHealth) {
+        throw "API가 제한 시간 안에 health 응답을 반환하지 못했습니다. 로그: $apiErrorLog"
     }
     $apiProcess.Refresh()
     if ($apiProcess.HasExited) {
@@ -105,6 +106,9 @@ try {
     Write-Host ''
     Write-Host "포탈: http://127.0.0.1:$PortalPort"
     Write-Host "API:  http://127.0.0.1:$ApiPort"
+    Write-Host ("Chrome readiness: {0}" -f $apiHealth.browser)
+    Write-Host ("API health: {0}" -f $apiHealth.status)
+    Write-Host "최초 관리자 bootstrap token: Get-Content -LiteralPath '$LocalBootstrapTokenPath'"
     Write-Host '상태 확인: .\scripts\status.ps1'
     Write-Host '종료: .\scripts\stop-local.ps1'
 }

@@ -1,0 +1,108 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: wisdom_auction
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d wisdom_auction"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      APP_RUNTIME: local
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@127.0.0.1:5432/wisdom_auction
+      AUTH_COOKIE_SECURE: "false"
+      AUTH_BOOTSTRAP_TOKEN: ci-only-dummy-bootstrap-token-32-bytes
+      AUTH_ALLOWED_ORIGINS: http://127.0.0.1:42880
+      CORS_ORIGINS: http://127.0.0.1:42880
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/pyproject.toml
+
+      - name: Install backend dependencies
+        run: python -m pip install -e ".[test]"
+
+      - name: Apply migrations to ephemeral PostgreSQL
+        run: python -m alembic upgrade head
+
+      - name: Run non-live backend tests
+        run: python -m pytest -m "not live_naver and not live_naver_full"
+
+  frontend:
+    name: Frontend
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Lint frontend
+        run: npm run lint
+
+      - name: Test frontend
+        run: npm run test
+
+      - name: Build frontend
+        run: npm run build
+
+  compose-contract:
+    name: Compose contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Create runner-only Compose environment
+        shell: bash
+        run: cp backend/.env.example backend/.env
+
+      - name: Validate production Compose configuration
+        run: docker compose -f docker-compose.production.yml config -q

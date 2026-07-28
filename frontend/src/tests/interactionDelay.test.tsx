@@ -20,7 +20,13 @@ describe('Chrome 화면 탐색 지연 프리셋', () => {
     expect(
       screen.getByRole('radio', { name: /기본.*1~2.5초/ }),
     ).toBeChecked()
+    expect(screen.getByLabelText('네이버 부동산 URL')).toHaveValue('')
+    expect(screen.getByRole('button', { name: '분석 시작' })).toBeDisabled()
 
+    await user.type(
+      screen.getByLabelText('네이버 부동산 URL'),
+      'https://fin.land.naver.com/map?demo=true',
+    )
     await user.click(
       screen.getByRole('radio', { name: /빠름.*0.7~1.2초/ }),
     )

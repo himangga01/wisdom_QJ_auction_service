@@ -167,6 +167,7 @@ function adaptApartmentBase(apartment: ApartmentSummaryApi, listingGroups: Listi
     complexId: apartment.complexId,
     complexName: apartment.complexName,
     address: apartment.address,
+    sourceId: apartment.sourceId,
     details: adaptDetails(apartment.details),
     listingGroups,
     history: [],

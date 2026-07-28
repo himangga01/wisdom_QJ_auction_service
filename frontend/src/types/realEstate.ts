@@ -156,6 +156,7 @@ export interface ApartmentSummary {
   complexId: string
   complexName: string
   address: string
+  sourceId?: string
   details: ApartmentDetails
   listingGroups: ListingGroup[]
   history: ApartmentHistoryPoint[]

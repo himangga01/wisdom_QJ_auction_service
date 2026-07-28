@@ -33,6 +33,8 @@ services:
       timeout: 5s
       retries: 5
       start_period: 10s
+    networks:
+      - default
 
   redis:
     image: redis:7-alpine
@@ -46,6 +48,32 @@ services:
       timeout: 5s
       retries: 5
       start_period: 5s
+    networks:
+      - default
+
+  chrome:
+    build:
+      context: ./docker/chrome
+      dockerfile: Dockerfile
+      args:
+        GOOGLE_CHROME_VERSION: ${GOOGLE_CHROME_VERSION:-}
+    image: wisdom-qj-auction-chrome:${CHROME_IMAGE_TAG:-stable}
+    init: true
+    restart: unless-stopped
+    shm_size: 1gb
+    expose:
+      - "9222"
+    volumes:
+      - chrome_profile:/var/lib/chrome/profile
+    networks:
+      - crawler_control
+      - browser_egress
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/check-cdp.sh"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
 
   migrate:
     <<: *backend-service
@@ -56,6 +84,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    networks:
+      - default
 
   api:
     <<: *backend-service
@@ -71,6 +101,9 @@ services:
     ports:
       - "${API_BIND_ADDRESS:-127.0.0.1}:${API_PORT:-42881}:8000"
     depends_on: *runtime-dependencies
+    networks:
+      - default
+      - crawler_control
     healthcheck:
       test:
         - CMD
@@ -92,7 +125,18 @@ services:
       - --loglevel=info
       - --concurrency=1
     restart: unless-stopped
-    depends_on: *runtime-dependencies
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      chrome:
+        condition: service_healthy
+    networks:
+      - default
+      - crawler_control
 
   scheduler:
     <<: *backend-service
@@ -104,7 +148,13 @@ services:
       - --loglevel=info
       - --schedule=/tmp/celerybeat-schedule
     restart: unless-stopped
-    depends_on: *runtime-dependencies
+    depends_on:
+      <<: *runtime-dependencies
+      chrome:
+        condition: service_healthy
+    networks:
+      - default
+      - crawler_control
 
   frontend:
     build:
@@ -120,7 +170,15 @@ services:
     depends_on:
       api:
         condition: service_healthy
+    networks:
+      - default
 
 volumes:
   postgres_data:
   redis_data:
+  chrome_profile:
+
+networks:
+  crawler_control:
+    internal: true
+  browser_egress:

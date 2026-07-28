@@ -179,7 +179,7 @@ APARTMENT_DETAIL_EXPORT_FIELDS: tuple[tuple[str, str], ...] = (
 
 
 class ExportNotFoundError(LookupError):
-    code = "export_source_not_found"
+    code = "dataset_not_found"
 
 
 @dataclass(frozen=True, slots=True)
@@ -294,8 +294,9 @@ TRADE_LABELS = {"sale": "매매", "jeonse": "전세", "monthly": "월세"}
 
 
 class ExportService:
-    def __init__(self, session: AsyncSession) -> None:
+    def __init__(self, session: AsyncSession, actor_user_id: UUID) -> None:
         self.session = session
+        self.actor_user_id = actor_user_id
 
     async def generate(
         self,
@@ -307,7 +308,12 @@ class ExportService:
     ) -> ExportFile:
         if from_date and to_date and from_date > to_date:
             raise ValueError("from은 to보다 늦을 수 없습니다.")
-        source = await self.session.get(TrackedSource, source_id)
+        source = await self.session.scalar(
+            select(TrackedSource).where(
+                TrackedSource.id == source_id,
+                TrackedSource.owner_user_id == self.actor_user_id,
+            )
+        )
         if source is None or source.naver_complex_id is None:
             raise ExportNotFoundError("내보낼 조사 URL을 찾을 수 없습니다.")
         apartment = await self.session.scalar(

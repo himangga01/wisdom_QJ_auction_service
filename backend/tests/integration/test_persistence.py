@@ -50,6 +50,14 @@ class Transaction:
             self.session.rollback_count += 1
 
 
+class NestedTransaction:
+    async def __aenter__(self):
+        return None
+
+    async def __aexit__(self, _exc_type, _exc, _traceback):
+        return None
+
+
 class RecordingSession:
     def __init__(self, run: CrawlRun, source: TrackedSource) -> None:
         self.run = run
@@ -61,6 +69,9 @@ class RecordingSession:
 
     def begin(self):
         return Transaction(self)
+
+    def begin_nested(self):
+        return NestedTransaction()
 
     async def get(self, model, identity, **_kwargs):
         if model is CrawlRun and identity == self.run.id:
@@ -201,6 +212,7 @@ def test_detail_comparison_requires_both_runs_enabled(
         naver_complex_id="12345",
         name="샘플아파트",
         address="서울시 샘플구",
+        details_json={},
         created_at=now,
         updated_at=now,
     )
@@ -231,6 +243,9 @@ def test_detail_comparison_requires_both_runs_enabled(
         latest_snapshot=snapshot,
         latest_aggregate=None,
         latest_article_ids=frozenset(),
+        source_seen=True,
+        source_state="active",
+        source_missing_count=0,
         latest_collect_broker_details=previous_enabled,
     )
     payload = CrawlPayload(
@@ -279,3 +294,56 @@ def test_detail_comparison_requires_both_runs_enabled(
     )
 
     assert observed == [expected]
+
+
+def test_apartment_snapshot_uses_only_details_observed_by_the_current_source() -> None:
+    now = datetime(2026, 7, 29, tzinfo=timezone.utc)
+    source = TrackedSource(
+        id=uuid4(),
+        source_url="https://fin.land.naver.com/map?complexId=12345&source=two",
+        normalized_url="https://fin.land.naver.com/map?complexId=12345&source=two",
+        url_hash="b" * 64,
+    )
+    run = CrawlRun(
+        id=uuid4(),
+        source_id=source.id,
+        status="running",
+        stage="details",
+        progress=70,
+    )
+    apartment = Apartment(
+        id=uuid4(),
+        naver_complex_id="12345",
+        name="다른 출처가 마지막으로 관찰한 이름",
+        address="다른 출처가 마지막으로 관찰한 주소",
+        details_json={
+            "householdCount": 999,
+            "managementOfficePhone": "02-0000-0000",
+        },
+        created_at=now,
+        updated_at=now,
+    )
+    payload = CrawlPayload(
+        status="completed",
+        apartment=ComplexDetail(
+            complex_id="12345",
+            name="현재 출처가 관찰한 이름",
+            address="",
+            details={"householdCount": 120},
+            captured_at=now,
+        ),
+        listings=[],
+        captured_at=now,
+    )
+    session = ExistingApartmentSession(run, source, apartment)
+
+    asyncio.run(PersistenceService(session).persist(run.id, payload))
+
+    snapshot = next(
+        value
+        for value in session.added
+        if isinstance(value, ApartmentSnapshot)
+    )
+    assert snapshot.details_json["details"] == {"household_count": 120}
+    assert snapshot.details_json["name"] == "현재 출처가 관찰한 이름"
+    assert snapshot.details_json["address"] == ""

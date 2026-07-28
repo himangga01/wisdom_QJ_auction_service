@@ -5,6 +5,8 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_session
+from app.api.dependencies.auth import current_user
+from app.api.routes.health import BrowserStatus, browser_status
 from app.domain.url_identity import InvalidSourceUrl
 from app.schemas.analysis import (
     AnalysisAccepted,
@@ -23,6 +25,7 @@ from app.services.analysis_service import (
     QueueUnavailableError,
 )
 from app.runtime import get_crawl_dispatcher
+from app.models import User
 
 router = APIRouter(prefix="/analyses", tags=["analyses"])
 
@@ -51,10 +54,21 @@ def api_error(error: Exception, http_status: int) -> HTTPException:
 @router.post("", response_model=AnalysisAccepted, status_code=status.HTTP_202_ACCEPTED)
 async def create_analysis(
     payload: AnalysisCreate,
+    user: Annotated[User, Depends(current_user)],
     analysis_service: Annotated[AnalysisService, Depends(service)],
+    browser: Annotated[BrowserStatus, Depends(browser_status)],
 ) -> AnalysisAccepted:
+    if browser == "unavailable":
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "code": "browser_unavailable",
+                "message": "수집용 Chrome이 준비되지 않았습니다.",
+            },
+        )
     try:
-        run, _ = await analysis_service.create(
+        run, _ = await analysis_service.create_for_user(
+            user.id,
             str(payload.source_url),
             collect_broker_details=payload.collect_broker_details,
             interaction_delay_preset=payload.interaction_delay_preset,
@@ -78,9 +92,10 @@ async def create_analysis(
 async def get_analysis(
     run_id: UUID,
     analysis_service: Annotated[AnalysisService, Depends(service)],
+    user: Annotated[User, Depends(current_user)],
 ) -> AnalysisStatus:
     try:
-        run = await analysis_service.get(run_id)
+        run = await analysis_service.get(user.id, run_id)
     except AnalysisNotFoundError as error:
         raise api_error(error, status.HTTP_404_NOT_FOUND) from error
     return AnalysisStatus(
@@ -101,9 +116,10 @@ async def get_analysis(
 async def get_analysis_result(
     run_id: UUID,
     analysis_service: Annotated[AnalysisService, Depends(service)],
+    user: Annotated[User, Depends(current_user)],
 ) -> AnalysisResult:
     try:
-        run, apartment, snapshot = await analysis_service.result(run_id)
+        run, apartment, snapshot = await analysis_service.result(user.id, run_id)
     except AnalysisNotFoundError as error:
         raise api_error(error, status.HTTP_404_NOT_FOUND) from error
     except AnalysisNotReadyError as error:
@@ -122,9 +138,10 @@ async def get_analysis_result(
 async def cancel_analysis(
     run_id: UUID,
     analysis_service: Annotated[AnalysisService, Depends(service)],
+    user: Annotated[User, Depends(current_user)],
 ) -> AnalysisCancel:
     try:
-        run = await analysis_service.cancel(run_id)
+        run = await analysis_service.cancel(user.id, run_id)
     except AnalysisNotFoundError as error:
         raise api_error(error, status.HTTP_404_NOT_FOUND) from error
     except AnalysisCannotCancelError as error:

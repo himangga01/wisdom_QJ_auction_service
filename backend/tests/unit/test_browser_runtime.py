@@ -3,32 +3,22 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.crawler.browser_runtime import open_crawler_page
-from app.crawler.errors import BrowserUnavailableError
+from app.crawler.browser_runtime import connect_external_chrome, open_crawler_page
+from app.crawler.errors import BrowserDisconnectedError, BrowserUnavailableError
 
 
 class _Page:
-    def __init__(self, *, close_error: Exception | None = None) -> None:
+    def __init__(self) -> None:
         self.closed = False
-        self.close_error = close_error
 
     async def close(self) -> None:
         self.closed = True
-        if self.close_error is not None:
-            raise self.close_error
 
 
 class _Context:
-    def __init__(
-        self,
-        page: _Page,
-        *,
-        new_page_error: Exception | None = None,
-        close_error: Exception | None = None,
-    ) -> None:
+    def __init__(self, page: _Page, *, new_page_error: Exception | None = None) -> None:
         self.page = page
         self.new_page_error = new_page_error
-        self.close_error = close_error
         self.new_page_calls = 0
         self.closed = False
 
@@ -38,54 +28,36 @@ class _Context:
             raise self.new_page_error
         return self.page
 
-    async def close(self) -> None:
-        self.closed = True
-        if self.close_error is not None:
-            raise self.close_error
-
 
 class _Browser:
-    def __init__(
-        self,
-        contexts: list[_Context],
-        *,
-        new_context_error: Exception | None = None,
-        close_error: Exception | None = None,
-    ) -> None:
+    def __init__(self, contexts: list[_Context], *, connected: bool = True) -> None:
         self.contexts = contexts
-        self.new_context_error = new_context_error
-        self.close_error = close_error
-        self.new_context_calls = 0
+        self.connected = connected
         self.closed = False
 
-    async def new_context(self) -> _Context:
-        self.new_context_calls += 1
-        if self.new_context_error is not None:
-            raise self.new_context_error
-        return self.contexts[0]
+    def is_connected(self) -> bool:
+        return self.connected
 
     async def close(self) -> None:
         self.closed = True
-        if self.close_error is not None:
-            raise self.close_error
 
 
 class _Chromium:
-    def __init__(self, browser: _Browser, *, connect_error: Exception | None = None) -> None:
-        self.browser = browser
-        self.connect_error = connect_error
+    def __init__(self, outcomes: list[_Browser | Exception]) -> None:
+        self.outcomes = outcomes
         self.cdp_urls: list[str] = []
-        self.launch_options: list[dict[str, object]] = []
+        self.launch_calls = 0
 
     async def connect_over_cdp(self, url: str) -> _Browser:
         self.cdp_urls.append(url)
-        if self.connect_error is not None:
-            raise self.connect_error
-        return self.browser
+        outcome = self.outcomes.pop(0)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
 
-    async def launch(self, **kwargs: object) -> _Browser:
-        self.launch_options.append(kwargs)
-        return self.browser
+    async def launch(self, **_: object) -> _Browser:
+        self.launch_calls += 1
+        raise AssertionError("crawler must never launch a browser")
 
 
 class _Playwright:
@@ -97,129 +69,8 @@ def test_external_chrome_uses_default_context_and_closes_only_task_page() -> Non
     page = _Page()
     context = _Context(page)
     browser = _Browser([context])
-    chromium = _Chromium(browser)
-    playwright = _Playwright(chromium)
-    settings = SimpleNamespace(
-        crawler_browser_mode="external_chrome",
-        crawler_cdp_url="http://127.0.0.1:42973",
-    )
-
-    async def run() -> None:
-        async with open_crawler_page(playwright, settings) as opened_page:
-            assert opened_page is page
-            assert chromium.cdp_urls == ["http://127.0.0.1:42973"]
-            assert context.new_page_calls == 1
-            assert context.closed is False
-
-    asyncio.run(run())
-
-    assert page.closed is True
-    assert browser.closed is True
-    assert context.closed is False
-    assert browser.new_context_calls == 0
-
-
-def test_external_chrome_translates_cdp_connection_failure() -> None:
-    browser = _Browser([])
-    chromium = _Chromium(browser, connect_error=OSError("connection refused"))
-    settings = SimpleNamespace(
-        crawler_browser_mode="external_chrome",
-        crawler_cdp_url="http://127.0.0.1:42973",
-    )
-
-    async def run() -> None:
-        async with open_crawler_page(_Playwright(chromium), settings):
-            raise AssertionError("must not yield a page")
-
-    with pytest.raises(BrowserUnavailableError):
-        asyncio.run(run())
-
-
-def test_external_chrome_translates_missing_default_context() -> None:
-    browser = _Browser([])
-    chromium = _Chromium(browser)
-    settings = SimpleNamespace(
-        crawler_browser_mode="external_chrome",
-        crawler_cdp_url="http://127.0.0.1:42973",
-    )
-
-    async def run() -> None:
-        async with open_crawler_page(_Playwright(chromium), settings):
-            raise AssertionError("must not yield a page")
-
-    with pytest.raises(BrowserUnavailableError):
-        asyncio.run(run())
-
-    assert browser.closed is True
-
-
-def test_external_chrome_preserves_unavailable_error_when_missing_context_close_fails() -> None:
-    browser = _Browser([], close_error=RuntimeError("close failed"))
-    chromium = _Chromium(browser)
-    settings = SimpleNamespace(
-        crawler_browser_mode="external_chrome",
-        crawler_cdp_url="http://127.0.0.1:42973",
-    )
-
-    async def run() -> None:
-        async with open_crawler_page(_Playwright(chromium), settings):
-            raise AssertionError("must not yield a page")
-
-    with pytest.raises(BrowserUnavailableError) as raised:
-        asyncio.run(run())
-
-    assert "기본 브라우저 context" in str(raised.value)
-    assert browser.closed is True
-
-
-def test_external_chrome_closes_connection_when_task_page_creation_fails() -> None:
-    context = _Context(_Page(), new_page_error=RuntimeError("page failed"))
-    browser = _Browser([context])
-    settings = SimpleNamespace(
-        crawler_browser_mode="external_chrome",
-        crawler_cdp_url="http://127.0.0.1:42973",
-    )
-
-    async def run() -> None:
-        async with open_crawler_page(_Playwright(_Chromium(browser)), settings):
-            raise AssertionError("must not yield a page")
-
-    with pytest.raises(RuntimeError, match="page failed"):
-        asyncio.run(run())
-
-    assert browser.closed is True
-    assert context.closed is False
-
-
-def test_external_chrome_closes_connection_when_task_page_close_fails() -> None:
-    page = _Page(close_error=RuntimeError("page close failed"))
-    context = _Context(page)
-    browser = _Browser([context])
-    settings = SimpleNamespace(
-        crawler_browser_mode="external_chrome",
-        crawler_cdp_url="http://127.0.0.1:42973",
-    )
-
-    async def run() -> None:
-        async with open_crawler_page(_Playwright(_Chromium(browser)), settings):
-            return None
-
-    with pytest.raises(RuntimeError, match="page close failed"):
-        asyncio.run(run())
-
-    assert browser.closed is True
-    assert context.closed is False
-
-
-def test_playwright_mode_preserves_legacy_launch_lifecycle() -> None:
-    page = _Page()
-    context = _Context(page)
-    browser = _Browser([context])
-    chromium = _Chromium(browser)
-    settings = SimpleNamespace(
-        crawler_browser_mode="playwright",
-        crawler_headless=True,
-    )
+    chromium = _Chromium([browser])
+    settings = SimpleNamespace(crawler_cdp_url="http://127.0.0.1:42973")
 
     async def run() -> None:
         async with open_crawler_page(_Playwright(chromium), settings) as opened_page:
@@ -227,62 +78,114 @@ def test_playwright_mode_preserves_legacy_launch_lifecycle() -> None:
 
     asyncio.run(run())
 
-    assert chromium.launch_options == [{"headless": True}]
-    assert browser.new_context_calls == 1
-    assert context.new_page_calls == 1
-    assert context.closed is True
-    assert browser.closed is True
+    assert chromium.cdp_urls == ["http://127.0.0.1:42973"]
+    assert chromium.launch_calls == 0
+    assert page.closed is True
+    assert context.closed is False
+    assert browser.closed is False
 
 
-def test_playwright_mode_closes_browser_when_context_creation_fails() -> None:
-    browser = _Browser([], new_context_error=RuntimeError("context failed"))
-    settings = SimpleNamespace(
-        crawler_browser_mode="playwright",
-        crawler_headless=True,
+def test_cdp_connection_retries_three_times_with_bounded_backoff() -> None:
+    page = _Page()
+    browser = _Browser([_Context(page)])
+    chromium = _Chromium(
+        [OSError("first"), OSError("second"), browser]
+    )
+    delays: list[float] = []
+
+    async def record_sleep(delay: float) -> None:
+        delays.append(delay)
+
+    connected = asyncio.run(
+        connect_external_chrome(
+            _Playwright(chromium),
+            "http://127.0.0.1:42973",
+            sleep=record_sleep,
+        )
     )
 
-    async def run() -> None:
-        async with open_crawler_page(_Playwright(_Chromium(browser)), settings):
-            raise AssertionError("must not yield a page")
+    assert connected is browser
+    assert len(chromium.cdp_urls) == 3
+    assert delays == [0.5, 1.0]
 
-    with pytest.raises(RuntimeError, match="context failed"):
+
+def test_cdp_connection_exhaustion_uses_stable_unavailable_error() -> None:
+    chromium = _Chromium([OSError("one"), OSError("two"), OSError("three")])
+
+    async def no_sleep(_: float) -> None:
+        return None
+
+    with pytest.raises(BrowserUnavailableError) as raised:
+        asyncio.run(
+            connect_external_chrome(
+                _Playwright(chromium),
+                "http://127.0.0.1:42973",
+                sleep=no_sleep,
+            )
+        )
+
+    assert raised.value.code == "browser_unavailable"
+    assert len(chromium.cdp_urls) == 3
+
+
+def test_cdp_connection_does_not_convert_task_cancellation_to_browser_failure() -> None:
+    class _CancelledChromium(_Chromium):
+        async def connect_over_cdp(self, url: str) -> _Browser:
+            self.cdp_urls.append(url)
+            raise asyncio.CancelledError
+
+    chromium = _CancelledChromium([])
+
+    async def no_sleep(_: float) -> None:
+        return None
+
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(
+            connect_external_chrome(
+                _Playwright(chromium),
+                "http://127.0.0.1:42973",
+                sleep=no_sleep,
+            )
+        )
+
+    assert len(chromium.cdp_urls) == 1
+
+
+def test_missing_default_context_is_unavailable_without_closing_chrome() -> None:
+    browser = _Browser([])
+    chromium = _Chromium([browser, browser, browser])
+
+    async def no_sleep(_: float) -> None:
+        return None
+
+    with pytest.raises(BrowserUnavailableError):
+        asyncio.run(
+            connect_external_chrome(
+                _Playwright(chromium),
+                "http://127.0.0.1:42973",
+                sleep=no_sleep,
+            )
+        )
+
+    assert browser.closed is False
+
+
+def test_disconnect_while_crawling_uses_stable_disconnected_error() -> None:
+    page = _Page()
+    browser = _Browser([_Context(page)])
+    settings = SimpleNamespace(crawler_cdp_url="http://127.0.0.1:42973")
+
+    async def run() -> None:
+        async with open_crawler_page(
+            _Playwright(_Chromium([browser])),
+            settings,
+        ):
+            browser.connected = False
+            raise RuntimeError("target closed")
+
+    with pytest.raises(BrowserDisconnectedError) as raised:
         asyncio.run(run())
 
-    assert browser.closed is True
-
-
-def test_playwright_mode_closes_context_and_browser_when_page_creation_fails() -> None:
-    context = _Context(_Page(), new_page_error=RuntimeError("page failed"))
-    browser = _Browser([context])
-    settings = SimpleNamespace(
-        crawler_browser_mode="playwright",
-        crawler_headless=True,
-    )
-
-    async def run() -> None:
-        async with open_crawler_page(_Playwright(_Chromium(browser)), settings):
-            raise AssertionError("must not yield a page")
-
-    with pytest.raises(RuntimeError, match="page failed"):
-        asyncio.run(run())
-
-    assert context.closed is True
-    assert browser.closed is True
-
-
-def test_playwright_mode_closes_browser_when_context_close_fails() -> None:
-    context = _Context(_Page(), close_error=RuntimeError("context close failed"))
-    browser = _Browser([context])
-    settings = SimpleNamespace(
-        crawler_browser_mode="playwright",
-        crawler_headless=True,
-    )
-
-    async def run() -> None:
-        async with open_crawler_page(_Playwright(_Chromium(browser)), settings):
-            return None
-
-    with pytest.raises(RuntimeError, match="context close failed"):
-        asyncio.run(run())
-
-    assert browser.closed is True
+    assert raised.value.code == "browser_disconnected"
+    assert page.closed is True
+    assert browser.closed is False

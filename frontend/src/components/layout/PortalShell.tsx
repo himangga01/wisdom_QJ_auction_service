@@ -1,5 +1,6 @@
 import { Outlet } from 'react-router-dom'
 import { PortalHeader } from './PortalHeader'
+import { RuntimeModeStatus } from './RuntimeModeStatus'
 
 export function PortalShell() {
   return (
@@ -9,7 +10,7 @@ export function PortalShell() {
         <Outlet />
       </main>
       <footer className="border-t border-slate-200 bg-white py-7 text-center text-xs text-slate-400">
-        집계뷰 데모 · 실제 네이버 부동산 데이터와 연결되지 않은 UX 프리뷰입니다.
+        <RuntimeModeStatus variant="footer" />
       </footer>
     </div>
   )

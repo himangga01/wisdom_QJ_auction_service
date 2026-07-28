@@ -9,6 +9,7 @@ import {
 } from '../../utils/listingHistory'
 import { aggregateListingAdditionalInfo } from '../../utils/listingAdditionalInfo'
 import { formatKoreanPrice, formatListingPrice, tradeTypeLabels } from '../../utils/formatters'
+import { listingHref } from '../../utils/sourceLinks'
 
 interface ListingComparisonBoardProps {
   apartment: ApartmentSummary
@@ -17,6 +18,7 @@ interface ListingComparisonBoardProps {
   beforeListings?: ListingGroup[]
   afterListings?: ListingGroup[]
   beforeRunStatus?: string
+  focusListingId?: string
 }
 
 type ComparisonCardType = 'added' | 'missing' | 'removed' | 'changed' | 'unobserved'
@@ -148,15 +150,16 @@ function ComparisonCard({
   before,
   after,
   changedFields,
+  focused = false,
 }: {
   apartment: ApartmentSummary
   type: ComparisonCardType
   before?: ListingGroup
   after?: ListingGroup
   changedFields?: ListingChangePair['changedFields']
+  focused?: boolean
 }) {
   const listing = after ?? before!
-  const runQuery = listing.runId ? `?runId=${encodeURIComponent(listing.runId)}` : ''
   const config = {
     added: {
       label: '신규·재노출',
@@ -218,7 +221,16 @@ function ComparisonCard({
     )
 
   return (
-    <article className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+    <article
+      id={`listing-${listing.groupId}`}
+      data-testid={`comparison-listing-${listing.groupId}`}
+      data-focused={focused ? 'true' : 'false'}
+      className={`overflow-hidden rounded-2xl border bg-white shadow-sm ${
+        focused
+          ? 'border-emerald-500 outline outline-4 outline-emerald-200'
+          : 'border-slate-200'
+      }`}
+    >
       <header className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 p-4">
         <div>
           <p className="text-xs font-bold text-slate-400">{tradeTypeLabels[listing.tradeType]} · {listing.groupId}</p>
@@ -241,7 +253,10 @@ function ComparisonCard({
       </div>
       <footer className="border-t border-slate-100 px-4 py-3 text-right">
         <Link
-          to={`/apartments/${apartment.complexId}/listings/${listing.groupId}${runQuery}`}
+          to={listingHref(apartment.complexId, listing.groupId, {
+            sourceId: apartment.sourceId,
+            runId: listing.runId,
+          })}
           className="text-xs font-extrabold text-emerald-700"
         >
           매물 상세 보기 →
@@ -258,6 +273,7 @@ export function ListingComparisonBoard({
   beforeListings,
   afterListings,
   beforeRunStatus,
+  focusListingId,
 }: ListingComparisonBoardProps) {
   const before = beforeListings ?? getListingsAt(apartment, beforeDate)
   const after = afterListings ?? getListingsAt(apartment, afterDate)
@@ -282,13 +298,13 @@ export function ListingComparisonBoard({
 
       {differenceCount ? (
         <div className="grid gap-4 xl:grid-cols-2">
-          {comparison.added.map((listing) => <ComparisonCard key={`added-${listing.groupId}`} apartment={apartment} type="added" after={listing} />)}
-          {comparison.changed.map((pair) => <ComparisonCard key={`changed-${pair.after.groupId}`} apartment={apartment} type="changed" before={pair.before} after={pair.after} changedFields={pair.changedFields} />)}
-          {comparison.missing.map((listing) => <ComparisonCard key={`missing-${listing.groupId}`} apartment={apartment} type="missing" before={beforeById.get(listing.groupId)} after={listing} />)}
-          {comparison.removed.map((listing) => <ComparisonCard key={`removed-${listing.groupId}`} apartment={apartment} type="removed" before={beforeById.get(listing.groupId)} after={listing} />)}
+          {comparison.added.map((listing) => <ComparisonCard key={`added-${listing.groupId}`} apartment={apartment} type="added" after={listing} focused={listing.groupId === focusListingId} />)}
+          {comparison.changed.map((pair) => <ComparisonCard key={`changed-${pair.after.groupId}`} apartment={apartment} type="changed" before={pair.before} after={pair.after} changedFields={pair.changedFields} focused={pair.after.groupId === focusListingId} />)}
+          {comparison.missing.map((listing) => <ComparisonCard key={`missing-${listing.groupId}`} apartment={apartment} type="missing" before={beforeById.get(listing.groupId)} after={listing} focused={listing.groupId === focusListingId} />)}
+          {comparison.removed.map((listing) => <ComparisonCard key={`removed-${listing.groupId}`} apartment={apartment} type="removed" before={beforeById.get(listing.groupId)} after={listing} focused={listing.groupId === focusListingId} />)}
           {comparison.unobserved.map((pair) => {
             const listing = pair.after ?? pair.before!
-            return <ComparisonCard key={`unobserved-${listing.groupId}`} apartment={apartment} type="unobserved" before={pair.before} after={pair.after} />
+            return <ComparisonCard key={`unobserved-${listing.groupId}`} apartment={apartment} type="unobserved" before={pair.before} after={pair.after} focused={listing.groupId === focusListingId} />
           })}
         </div>
       ) : (

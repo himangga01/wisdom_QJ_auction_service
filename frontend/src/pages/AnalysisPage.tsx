@@ -9,23 +9,18 @@ import { formatCollectedAt } from '../utils/formatters'
 export function AnalysisPage() {
   const analysis = useAnalysis()
   const demo = useDemoAnalysis()
-  const status = analysis.isDemo ? demo.status : analysis.status
-  const progress = analysis.isDemo
-    ? Math.round((demo.progressStep / 3) * 100)
-    : analysis.progress
+  const status = analysis.status
+  const progress = analysis.progress
   const selectedDemoApartment = demo.dataset?.apartments.find((apartment) => apartment.complexId === demo.selectedApartmentId)
   const selectedRealApartment = analysis.selectedApartment
   const selectedApartment = analysis.isDemo ? selectedDemoApartment : selectedRealApartment
   const collectedAt = analysis.isDemo ? demo.dataset?.collectedAt : selectedRealApartment?.collectedAt
-  const completed = status === 'completed' || status === 'partial'
+  const successfulTerminal = status === 'completed' || status === 'partial'
+  const completed = successfulTerminal && (
+    analysis.isDemo || analysis.resultHydrationStatus === 'ready'
+  )
 
-  const startAnalysis = (request: AnalysisCreateApi) => {
-    if (analysis.isDemo) {
-      demo.startDemoAnalysis(request)
-      return
-    }
-    return analysis.startAnalysis(request)
-  }
+  const startAnalysis = (request: AnalysisCreateApi) => analysis.startAnalysis(request)
 
   return (
     <div className="py-5 lg:py-10">
@@ -34,7 +29,15 @@ export function AnalysisPage() {
         stage={analysis.isDemo ? null : analysis.stage}
         progress={progress}
         error={analysis.isDemo ? demo.error : analysis.error}
+        notice={analysis.notice}
+        isRestoringRun={analysis.isRestoringRun}
+        isCancelling={analysis.isCancelling}
+        browserUnavailable={
+          analysis.browserStatus !== 'ready'
+          && analysis.browserStatus !== 'not_required'
+        }
         onStart={startAnalysis}
+        onCancel={analysis.cancelQueuedAnalysis}
       />
 
       {completed ? (
@@ -57,6 +60,19 @@ export function AnalysisPage() {
               대시보드에서 결과 보기 <ArrowRight size={17} />
             </Link>
           </div>
+        </section>
+      ) : null}
+      {!analysis.isDemo && successfulTerminal && analysis.resultHydrationStatus === 'loading' ? (
+        <section className="mx-auto mt-5 max-w-4xl rounded-[24px] border border-sky-200 bg-sky-50 p-6 text-sm font-extrabold text-sky-800" aria-live="polite">
+          수집 결과를 대시보드용 데이터로 정리하고 있습니다.
+        </section>
+      ) : null}
+      {!analysis.isDemo && successfulTerminal && analysis.resultHydrationStatus === 'error' ? (
+        <section className="mx-auto mt-5 max-w-4xl rounded-[24px] border border-amber-200 bg-amber-50 p-6" aria-live="polite">
+          <p className="text-sm font-extrabold text-amber-900">수집은 끝났지만 결과 화면을 불러오지 못했습니다.</p>
+          <button type="button" onClick={analysis.retryResultHydration} className="mt-3 rounded-xl bg-slate-950 px-4 py-2.5 text-sm font-extrabold text-white">
+            결과 다시 불러오기
+          </button>
         </section>
       ) : null}
     </div>
