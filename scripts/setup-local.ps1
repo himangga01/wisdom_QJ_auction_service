@@ -1,0 +1,84 @@
+﻿[CmdletBinding()]
+param()
+
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
+
+. (Join-Path $PSScriptRoot 'runtime-common.ps1')
+
+Initialize-LocalRuntimeDirectories
+
+$launcher = Get-Command py.exe -ErrorAction SilentlyContinue
+$launcherArguments = @('-3')
+if ($null -eq $launcher) {
+    $launcher = Get-Command python.exe -ErrorAction SilentlyContinue
+    $launcherArguments = @()
+}
+if ($null -eq $launcher) {
+    throw 'Python 3.12~3.14가 필요합니다. Python을 설치한 뒤 다시 실행하세요.'
+}
+
+$versionCheckArguments = $launcherArguments + @(
+    '-c',
+    'import sys; raise SystemExit(0 if (3, 12) <= sys.version_info[:2] < (3, 15) else 1)'
+)
+Invoke-CheckedCommand `
+    -Executable $launcher.Source `
+    -Arguments $versionCheckArguments `
+    -WorkingDirectory $RepositoryRoot `
+    -FailureMessage '지원하는 Python 버전은 3.12 이상 3.15 미만입니다.'
+
+if (-not (Test-Path -LiteralPath $VenvPython -PathType Leaf)) {
+    Write-Host '로컬 Python 가상환경을 생성합니다.'
+    Invoke-CheckedCommand `
+        -Executable $launcher.Source `
+        -Arguments ($launcherArguments + @('-m', 'venv', $VenvRoot)) `
+        -WorkingDirectory $RepositoryRoot `
+        -FailureMessage 'Python 가상환경 생성에 실패했습니다.'
+}
+
+Write-Host '백엔드 패키지를 설치합니다.'
+Invoke-CheckedCommand `
+    -Executable $VenvPython `
+    -Arguments @('-m', 'pip', 'install', '--upgrade', 'pip') `
+    -WorkingDirectory $RepositoryRoot `
+    -FailureMessage 'pip 업데이트에 실패했습니다.'
+Invoke-CheckedCommand `
+    -Executable $VenvPython `
+    -Arguments @('-m', 'pip', 'install', '-e', $BackendRoot) `
+    -WorkingDirectory $RepositoryRoot `
+    -FailureMessage '백엔드 패키지 설치에 실패했습니다.'
+
+Write-Host 'Playwright Chromium을 설치합니다.'
+Invoke-CheckedCommand `
+    -Executable $VenvPython `
+    -Arguments @('-m', 'playwright', 'install', 'chromium') `
+    -WorkingDirectory $BackendRoot `
+    -FailureMessage 'Playwright Chromium 설치에 실패했습니다.'
+
+$npmCommand = Get-Command npm.cmd -ErrorAction SilentlyContinue
+if ($null -eq $npmCommand) {
+    $npmCommand = Get-Command npm -ErrorAction SilentlyContinue
+}
+if ($null -eq $npmCommand) {
+    throw 'Node.js와 npm이 필요합니다. Node.js 22 LTS 설치 후 다시 실행하세요.'
+}
+
+Write-Host '프런트엔드 패키지를 설치합니다.'
+Invoke-CheckedCommand `
+    -Executable $npmCommand.Source `
+    -Arguments @('install') `
+    -WorkingDirectory $FrontendRoot `
+    -FailureMessage '프런트엔드 패키지 설치에 실패했습니다.'
+
+Set-LocalRuntimeEnvironment
+Write-Host 'SQLite 데이터베이스 마이그레이션을 적용합니다.'
+Invoke-CheckedCommand `
+    -Executable $VenvPython `
+    -Arguments @('-m', 'alembic', 'upgrade', 'head') `
+    -WorkingDirectory $BackendRoot `
+    -FailureMessage 'SQLite 마이그레이션에 실패했습니다.'
+
+Write-Host ''
+Write-Host '로컬 실행 준비가 완료되었습니다.'
+Write-Host '다음 명령: .\scripts\start.ps1 -Mode local'

@@ -1,0 +1,2 @@
+"""Naver Land collection boundaries."""
+

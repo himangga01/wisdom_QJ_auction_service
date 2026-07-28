@@ -1,0 +1,242 @@
+{
+  "schema_version": "1",
+  "collector": "gpt_browser_exploration",
+  "mode": "sample",
+  "captured_at": "2026-07-25T06:44:29.165Z",
+  "cases": [
+    {
+      "case_id": "case-131197",
+      "source_url": "https://fin.land.naver.com/map?center=3zl7w3-2Ayhk0&zoom=15&layer=NobwRAlgJmBcYGMD2BbADgGwKYA8D6UWALgIYQZgA0YaJATiSgM5zjLrY4CSM8AjAGY%2BfAJwB2MAF9qTLPQQALAAr1GLWOFIAjOGHpEICbFT10DRrABUGhSwE80WdWACCfE0QYA7JiQQGkLyU7LECAc3tHADkAVxQtLDpdd2pPEh8-AK9rElsHLF03KWo6Yhi6LxItY1hPGKxJAF0gA",
+      "complex_id": "131197",
+      "complex_name": "신동탄포레자이",
+      "trade_counts": {
+        "매매": 53,
+        "전세": 2,
+        "월세": 1
+      },
+      "articles": [
+        {
+          "article_id": "2639996355",
+          "trade_type": "매매",
+          "price": 950000000,
+          "building": "107동",
+          "floor": "14/29층",
+          "direction": "(거실 기준) 남동향",
+          "supply_area_m2": "100.37",
+          "exclusive_area_m2": "74.81",
+          "displayed_broker_count": 7,
+          "option_tags": [
+            "시스템에어컨"
+          ],
+          "move_in_date": "2027년 11월 하순",
+          "required_detail_fields": {
+            "provider": "부동산뱅크",
+            "is_npay": "False",
+            "management_fee": "300000",
+            "room_count": "3",
+            "bathroom_count": "2",
+            "structure": "단층"
+          }
+        },
+        {
+          "article_id": "2639086493",
+          "trade_type": "전세",
+          "price": 550000000,
+          "building": "105동",
+          "floor": "7/29층",
+          "direction": "(거실 기준) 남동향",
+          "supply_area_m2": "100.37",
+          "exclusive_area_m2": "74.81",
+          "displayed_broker_count": 1,
+          "option_tags": [
+            "중문"
+          ],
+          "move_in_date": "2027년 01월 29일",
+          "required_detail_fields": {
+            "provider": "부동산렛츠",
+            "is_npay": "False",
+            "management_fee": "300000",
+            "room_count": "3",
+            "bathroom_count": "2",
+            "structure": "단층"
+          }
+        },
+        {
+          "article_id": "2639647856",
+          "trade_type": "월세",
+          "price": null,
+          "building": "104동",
+          "floor": "14/29층",
+          "direction": "(거실 기준) 남동향",
+          "supply_area_m2": "108.51",
+          "exclusive_area_m2": "84.97",
+          "displayed_broker_count": 1,
+          "option_tags": [],
+          "move_in_date": "즉시입주 협의 가능",
+          "required_detail_fields": {
+            "provider": "부동산렛츠",
+            "is_npay": "False",
+            "management_fee": "320000",
+            "room_count": "3",
+            "bathroom_count": "2",
+            "structure": "단층"
+          }
+        }
+      ]
+    },
+    {
+      "case_id": "case-155817",
+      "source_url": "https://fin.land.naver.com/map?center=3zo0wV-2AKg3w&zoom=14&layer=NobwRAlgJmBcYGMD2BbADgGwKYA8D6UWALgIYQZgA0YaJATiSgM5zjLrY4CSM8AjAFYBADj4B2MAF9qTLPQQALAAr1GLWOFIAjOGHpEICbFT10DRrABUGhSwE80WdWACCfE0QYA7JiQQGkLyU7LECAc3tHADkAVxQtLDpdAE4Pb19-CEDrElsHLF03KWo6Yhi6LxItY1hPGKxJAF0gA",
+      "complex_id": "155817",
+      "complex_name": "올림픽파크포레온",
+      "trade_counts": {
+        "매매": 596,
+        "전세": 444,
+        "월세": 386
+      },
+      "articles": [
+        {
+          "article_id": "2640027269",
+          "trade_type": "매매",
+          "price": 3100000000,
+          "building": "109동",
+          "floor": "중/30층",
+          "direction": "(거실 기준) 남향",
+          "supply_area_m2": "112.69",
+          "exclusive_area_m2": "84.99",
+          "displayed_broker_count": 1,
+          "option_tags": [],
+          "move_in_date": "즉시입주 협의 가능",
+          "required_detail_fields": {
+            "provider": "매경부동산",
+            "is_npay": "False",
+            "management_fee": "300000",
+            "room_count": "3",
+            "bathroom_count": "2",
+            "structure": "단층"
+          }
+        },
+        {
+          "article_id": "2639624691",
+          "trade_type": "전세",
+          "price": 2200000000,
+          "building": "411동",
+          "floor": "고/18층",
+          "direction": "(거실 기준) 남향",
+          "supply_area_m2": "165.46",
+          "exclusive_area_m2": "134.98",
+          "displayed_broker_count": 32,
+          "option_tags": [],
+          "move_in_date": "2027년 01월 초순 협의 가능",
+          "required_detail_fields": {
+            "provider": "아실",
+            "is_npay": "True",
+            "management_fee": "400000",
+            "room_count": "4",
+            "bathroom_count": "2",
+            "structure": "단층"
+          }
+        },
+        {
+          "article_id": "2640025692",
+          "trade_type": "월세",
+          "price": null,
+          "building": "321동",
+          "floor": "고/23층",
+          "direction": "(거실 기준) 남향",
+          "supply_area_m2": "62.24",
+          "exclusive_area_m2": "39.95",
+          "displayed_broker_count": 1,
+          "option_tags": [],
+          "move_in_date": "즉시입주 협의 가능",
+          "required_detail_fields": {
+            "provider": "매경부동산",
+            "is_npay": "False",
+            "management_fee": "150000",
+            "room_count": "2",
+            "bathroom_count": "1",
+            "structure": "단층"
+          }
+        }
+      ]
+    },
+    {
+      "case_id": "case-22746",
+      "source_url": "https://fin.land.naver.com/map?center=3zlP9R-2AJOsS&zoom=14&layer=NobwRAlgJmBcYGMD2BbADgGwKYA8D6UWALgIYQZgA0YaJATiSgM5zjLrY4CSM8ATHwDsAFgBsYAL7UmWeggAWABXqMWscKQBGcMPSIQE2Krrr7DWACoNCFgJ5osasAEEAjMaIMAdkxIJ9SF6KtliBAOZ2DgByAK4omlh0Oq4ADB7evv4QgVYkNvZYOm6S1HTEMXReJJpGsJ4xWBIAukA",
+      "complex_id": "22746",
+      "complex_name": "리센츠",
+      "trade_counts": {
+        "매매": 215,
+        "전세": 73,
+        "월세": 54
+      },
+      "articles": [
+        {
+          "article_id": "2639805215",
+          "trade_type": "매매",
+          "price": 3800000000,
+          "building": "208동",
+          "floor": "고/33층",
+          "direction": "(거실 기준) 남동향",
+          "supply_area_m2": "109.26",
+          "exclusive_area_m2": "84.99",
+          "displayed_broker_count": 1,
+          "option_tags": [
+            "시스템에어컨"
+          ],
+          "move_in_date": "2026년 12월 10일 협의 가능",
+          "required_detail_fields": {
+            "provider": "부동산뱅크",
+            "is_npay": "False",
+            "management_fee": "384141",
+            "room_count": "3",
+            "bathroom_count": "2",
+            "structure": "단층"
+          }
+        },
+        {
+          "article_id": "2639977617",
+          "trade_type": "전세",
+          "price": 1600000000,
+          "building": "247동",
+          "floor": "저/30층",
+          "direction": "(거실 기준) 남서향",
+          "supply_area_m2": "109.4",
+          "exclusive_area_m2": "84.99",
+          "displayed_broker_count": 1,
+          "option_tags": [],
+          "move_in_date": "2026년 11월 하순 협의 가능",
+          "required_detail_fields": {
+            "provider": "부동산뱅크",
+            "is_npay": "False",
+            "management_fee": "350000",
+            "room_count": "3",
+            "bathroom_count": "2",
+            "structure": "단층"
+          }
+        },
+        {
+          "article_id": "2640021837",
+          "trade_type": "월세",
+          "price": null,
+          "building": "244동",
+          "floor": "고/33층",
+          "direction": "(거실 기준) 남동향",
+          "supply_area_m2": "42.6",
+          "exclusive_area_m2": "27.68",
+          "displayed_broker_count": 1,
+          "option_tags": [],
+          "move_in_date": "2026년 08월 31일 협의 가능",
+          "required_detail_fields": {
+            "provider": "부동산뱅크",
+            "is_npay": "False",
+            "management_fee": "120000",
+            "room_count": "1",
+            "bathroom_count": "1",
+            "structure": "단층"
+          }
+        }
+      ]
+    }
+  ]
+}
