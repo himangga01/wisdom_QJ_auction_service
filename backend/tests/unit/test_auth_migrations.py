@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import importlib.util
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 
@@ -44,3 +46,38 @@ def test_owner_downgrade_refuses_to_restore_global_url_uniqueness_with_duplicate
 
     with pytest.raises(RuntimeError, match="duplicate tracked source URL hashes"):
         migration._assert_global_url_hashes_unique(_Bind())
+
+
+def test_revision_0002_widens_postgresql_version_column(monkeypatch) -> None:
+    migration = _load("0002_listing_aggregate_source_count.py")
+    alter_column = Mock()
+    monkeypatch.setattr(
+        migration.op,
+        "get_bind",
+        lambda: SimpleNamespace(dialect=SimpleNamespace(name="postgresql")),
+    )
+    monkeypatch.setattr(migration.op, "alter_column", alter_column)
+
+    migration._widen_alembic_version_column()
+
+    alter_column.assert_called_once()
+    args, kwargs = alter_column.call_args
+    assert args == ("alembic_version", "version_num")
+    assert kwargs["existing_type"].length == 32
+    assert kwargs["type_"].length == 128
+    assert kwargs["existing_nullable"] is False
+
+
+def test_revision_0002_leaves_sqlite_version_column_unchanged(monkeypatch) -> None:
+    migration = _load("0002_listing_aggregate_source_count.py")
+    alter_column = Mock()
+    monkeypatch.setattr(
+        migration.op,
+        "get_bind",
+        lambda: SimpleNamespace(dialect=SimpleNamespace(name="sqlite")),
+    )
+    monkeypatch.setattr(migration.op, "alter_column", alter_column)
+
+    migration._widen_alembic_version_column()
+
+    alter_column.assert_not_called()

@@ -11,7 +11,20 @@ branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
 
+def _widen_alembic_version_column() -> None:
+    if op.get_bind().dialect.name != "postgresql":
+        return
+    op.alter_column(
+        "alembic_version",
+        "version_num",
+        existing_type=sa.String(length=32),
+        type_=sa.String(length=128),
+        existing_nullable=False,
+    )
+
+
 def upgrade() -> None:
+    _widen_alembic_version_column()
     with op.batch_alter_table("listing_aggregates") as batch_op:
         batch_op.add_column(
             sa.Column(

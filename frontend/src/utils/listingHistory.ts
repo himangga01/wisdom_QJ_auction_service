@@ -173,7 +173,10 @@ export function compareListingSnapshots(
   }
 
   for (const beforeListing of before) {
-    if (!afterById.has(beforeListing.groupId)) {
+    if (afterById.has(beforeListing.groupId)) continue
+    if (beforeListing.removedAt) {
+      removed.push({ ...beforeListing, status: 'removed' })
+    } else {
       unobserved.push({ before: beforeListing })
     }
   }

@@ -31,7 +31,7 @@ describe('인증 API client 계약', () => {
 
   it('파일 요청에도 same-origin credentials를 사용한다', async () => {
     const fetchMock = vi.fn().mockResolvedValue(
-      new Response(new Blob(['file']), {
+      new Response('file', {
         status: 200,
         headers: { 'Content-Disposition': 'attachment; filename="result.xlsx"' },
       }),

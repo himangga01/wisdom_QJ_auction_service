@@ -50,7 +50,6 @@ jobs:
       LIVE_E2E_APPROVAL_PHRASE: ${{ inputs.approvalPhrase }}
       LIVE_E2E_MANIFEST_PATH: ${{ vars.NAVER_E2E_CASE_MANIFEST_PATH }}
       LIVE_E2E_REFERENCE_PATH: ${{ vars.NAVER_E2E_REFERENCE_PATH }}
-      LIVE_E2E_ARTIFACT_DIR: ${{ runner.temp }}\wisdom-naver-live-e2e\${{ github.run_id }}
       NAVER_E2E_CDP_URL: http://127.0.0.1:42973
     steps:
       - name: Check out source
@@ -71,6 +70,8 @@ jobs:
 
       - name: Run protected one-apartment live E2E
         shell: powershell
+        env:
+          LIVE_E2E_ARTIFACT_DIR: ${{ runner.temp }}\wisdom-naver-live-e2e\${{ github.run_id }}
         run: |
           .\scripts\run-live-naver-e2e.ps1 `
             -CaseId $env:LIVE_E2E_CASE_ID `
@@ -88,7 +89,7 @@ jobs:
         with:
           name: naver-live-e2e-${{ github.run_id }}
           path: |
-            ${{ env.LIVE_E2E_ARTIFACT_DIR }}\summary.json
-            ${{ env.LIVE_E2E_ARTIFACT_DIR }}\diff.json
+            ${{ runner.temp }}\wisdom-naver-live-e2e\${{ github.run_id }}\summary.json
+            ${{ runner.temp }}\wisdom-naver-live-e2e\${{ github.run_id }}\diff.json
           if-no-files-found: error
           retention-days: 3

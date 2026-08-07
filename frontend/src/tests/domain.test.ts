@@ -33,5 +33,16 @@ describe('real-estate domain data', () => {
     expect(comparison.added.map((item) => item.groupId)).toContain('124735-sale-112')
     expect(comparison.removed.map((item) => item.groupId)).toContain('124735-sale-118')
     expect(comparison.changed.map((item) => item.after.groupId)).toContain('124735-sale-101')
+
+    const unobservedBefore = {
+      ...previous[0]!,
+      groupId: 'unobserved-without-removed-at',
+      removedAt: undefined,
+    }
+    const absenceComparison = compareListingSnapshots([unobservedBefore], [])
+
+    expect(absenceComparison.removed).toHaveLength(0)
+    expect(absenceComparison.unobserved.map((item) => item.before?.groupId))
+      .toContain('unobserved-without-removed-at')
   })
 })

@@ -32,6 +32,26 @@ def test_live_workflow_runs_only_from_main() -> None:
     assert "github.ref == 'refs/heads/main'" in condition
 
 
+def test_live_workflow_uses_runner_temp_only_inside_steps() -> None:
+    workflow = _compose(REPOSITORY_ROOT / ".github/workflows/live-naver-e2e.yml")
+    job = workflow["jobs"]["live-one-apartment"]
+    assert "LIVE_E2E_ARTIFACT_DIR" not in job.get("env", {})
+
+    run_step = next(
+        step
+        for step in job["steps"]
+        if step["name"] == "Run protected one-apartment live E2E"
+    )
+    assert "${{ runner.temp }}" in run_step["env"]["LIVE_E2E_ARTIFACT_DIR"]
+
+    upload_step = next(
+        step
+        for step in job["steps"]
+        if step["name"] == "Upload sanitized live comparison"
+    )
+    assert "${{ runner.temp }}" in upload_step["with"]["path"]
+
+
 def test_chrome_build_uses_current_stable_by_default_with_optional_exact_pin() -> None:
     for relative_path in (
         "backend/docker-compose.yml",
