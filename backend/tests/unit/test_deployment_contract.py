@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 
@@ -122,6 +123,65 @@ def test_windows_local_runtime_generates_and_reuses_bootstrap_token(
 
     assert completed.returncode == 0, completed.stderr
     assert token_path.read_text(encoding="ascii").strip()
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows local runtime contract")
+def test_windows_naver_chrome_start_records_ready_child_listener(
+    tmp_path: Path,
+) -> None:
+    source_script = REPOSITORY_ROOT / "scripts/start-naver-browser.ps1"
+    start_script = tmp_path / "start-naver-browser.ps1"
+    runtime_common = tmp_path / "runtime-common.ps1"
+    pid_file = tmp_path / "naver-chrome.pid"
+    profile_path = tmp_path / "naver-chrome-profile"
+
+    shutil.copy2(source_script, start_script)
+    runtime_common.write_text(
+        "\n".join(
+            [
+                "$NaverChromePidFile = Join-Path $PSScriptRoot 'naver-chrome.pid'",
+                "$NaverChromeProfilePath = Join-Path $PSScriptRoot 'naver-chrome-profile'",
+                "$ChromeCdpPort = 42973",
+                "$ChromeCdpUrl = 'http://127.0.0.1:42973'",
+                "function Initialize-LocalRuntimeDirectories {}",
+                "function Read-RecordedProcessId { param([string]$PidFile) return $null }",
+                "function Test-NaverChromeAgent { param([int]$ProcessId) return $ProcessId -eq 200 }",
+                "function Assert-LocalPortAvailable { param([int]$Port, [string]$ServiceName) }",
+                "function Find-InstalledGoogleChrome { return 'C:\\fake\\chrome.exe' }",
+                "function Start-Process {",
+                "    param([string]$FilePath, [object[]]$ArgumentList, [switch]$PassThru)",
+                "    return [pscustomobject]@{ Id = 100 }",
+                "}",
+                "function Get-NaverChromeListenerProcessId { return 200 }",
+                "function Write-RecordedProcessId {",
+                "    param([string]$PidFile, [int]$ProcessId)",
+                "    Set-Content -LiteralPath $PidFile -Value $ProcessId -Encoding ASCII",
+                "}",
+                "function Stop-StartedNaverChromeProcess { param([int]$ProcessId) return $true }",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    completed = subprocess.run(
+        [
+            "powershell.exe",
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(start_script),
+            "-PassThru",
+        ],
+        capture_output=True,
+        text=True,
+        errors="replace",
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert pid_file.read_text(encoding="ascii").strip() == "200"
 
 
 def test_live_runner_requires_root_virtual_environment() -> None:

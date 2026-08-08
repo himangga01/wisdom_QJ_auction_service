@@ -58,19 +58,18 @@ try {
     $deadline = [DateTime]::UtcNow.AddSeconds(20)
     while ([DateTime]::UtcNow -lt $deadline) {
         $listenerProcessId = Get-NaverChromeListenerProcessId
-        if ($null -ne $listenerProcessId -and $listenerProcessId -ne $chromeProcess.Id) {
-            throw "CDP 포트 $ChromeCdpPort 의 listener 소유 PID $listenerProcessId 가 이번에 시작한 Chrome PID $($chromeProcess.Id)와 일치하지 않습니다."
-        }
-
-        if (Test-NaverChromeAgent -ProcessId $chromeProcess.Id) {
+        if (
+            $null -ne $listenerProcessId -and
+            (Test-NaverChromeAgent -ProcessId $listenerProcessId)
+        ) {
             Write-RecordedProcessId `
                 -PidFile $NaverChromePidFile `
-                -ProcessId $chromeProcess.Id
+                -ProcessId $listenerProcessId
             if ($PassThru) {
                 [pscustomobject]@{ StartedByThisInvocation = $true }
             }
             else {
-                Write-Host "Naver Chrome이 준비되었습니다. PID: $($chromeProcess.Id), CDP: $ChromeCdpUrl"
+                Write-Host "Naver Chrome이 준비되었습니다. PID: $listenerProcessId, CDP: $ChromeCdpUrl"
             }
             return
         }
