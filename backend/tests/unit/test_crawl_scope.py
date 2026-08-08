@@ -2070,6 +2070,7 @@ class _AssemblyMapPage:
     def __init__(self) -> None:
         self.goto_calls: list[str] = []
         self.response_callback = None
+        self.closed = False
 
     def on(self, event: str, callback) -> None:
         assert event == "response"
@@ -2083,6 +2084,9 @@ class _AssemblyMapPage:
 
     async def title(self) -> str:
         return "신동탄포레자이"
+
+    async def close(self) -> None:
+        self.closed = True
 
 
 class _AssemblyContext:
@@ -2102,6 +2106,7 @@ class _AssemblyContext:
 class _AssemblyBrowser:
     def __init__(self, context: _AssemblyContext) -> None:
         self.context = context
+        self.contexts = [context]
         self.closed = False
 
     async def new_context(self) -> _AssemblyContext:
@@ -2115,7 +2120,8 @@ class _AssemblyChromium:
     def __init__(self, browser: _AssemblyBrowser) -> None:
         self.browser = browser
 
-    async def launch(self, **kwargs: object) -> _AssemblyBrowser:
+    async def connect_over_cdp(self, endpoint_url: str) -> _AssemblyBrowser:
+        assert endpoint_url == "http://127.0.0.1:42973"
         return self.browser
 
 
@@ -2270,8 +2276,9 @@ def test_collect_assembly_uses_success_ids_and_group_warning_for_partial(
     assert type(collector.blocking_trackers[0]).__name__ == (
         "_BlockingResponseTracker"
     )
-    assert context.closed is True
-    assert browser.closed is True
+    assert page.closed is True
+    assert context.closed is False
+    assert browser.closed is False
 
 
 def test_collect_assembly_fails_closed_when_full_count_exceeds_groups(

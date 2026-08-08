@@ -11,11 +11,17 @@ def listing(**changes) -> ComparableListing:
         "price": 720_000_000,
         "deposit": None,
         "monthly_rent": None,
+        "building": "101동",
+        "supply_area_m2": 110.65,
+        "exclusive_area_m2": 84.98,
         "management_fee": "25만원",
         "move_in_date": "즉시입주",
         "floor": "12/25층",
         "direction": "남향",
+        "room_bathroom": "방3/욕실2",
+        "loan": "융자 없음",
         "option_tags": ("식기세척기",),
+        "registration_count": 2,
         "article_ids": frozenset({"1", "2"}),
     }
     values.update(changes)

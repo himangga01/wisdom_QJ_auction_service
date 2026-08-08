@@ -8,7 +8,8 @@ from app.core.config import Settings
 from app.core.database import configure_sqlite_connection
 
 
-def test_local_runtime_uses_sqlite_by_default() -> None:
+def test_local_runtime_uses_sqlite_by_default(monkeypatch) -> None:
+    monkeypatch.delenv("DATABASE_URL", raising=False)
     settings = Settings(app_runtime="local", _env_file=None)
 
     assert settings.is_local is True

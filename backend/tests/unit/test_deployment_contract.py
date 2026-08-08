@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 import subprocess
+import sys
 
+import pytest
 import yaml
 
 
@@ -72,6 +74,7 @@ def test_chrome_build_uses_current_stable_by_default_with_optional_exact_pin() -
     assert "ARG GOOGLE_CHROME_VERSION=138.0.7204.157-1" not in dockerfile
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows local runtime contract")
 def test_windows_local_runtime_generates_and_reuses_bootstrap_token(
     tmp_path: Path,
 ) -> None:
