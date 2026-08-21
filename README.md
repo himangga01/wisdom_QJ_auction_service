@@ -4,6 +4,24 @@
 
 네이버 부동산 URL 한 개를 기준으로 아파트 매물 조사 이력, 날짜별 변화, 상세 정보와 XLSX 내보내기를 제공하는 React + FastAPI 프로젝트다. 실행 방식은 로컬 또는 Docker 중에서 선택할 수 있다. 로컬 수집은 별도 전용 프로필로 실행한 일반 Google Chrome에 연결한다.
 
+### 현재 구현 상태
+
+현재 구현된 주요 기능은 다음과 같다.
+
+- 네이버 부동산 URL 한 개를 입력해 아파트 매매·전세·월세 매물을 조사한다.
+- 일반 Google Chrome 화면을 탐색하며 `중개사 n곳에서 등록했어요`의 전체 등록 행과 각 물건의 상세 슬라이드를 수집한다.
+- Npay 물건은 `Npay 부동산에서 보기` 내부 경로를 우선 사용하고, 불완전한 전수 수집 결과는 저장하지 않는다.
+- 중복 등록을 대표 매물로 통합하면서 중개사별 원본, 상세 설명, 옵션, 시세·비용·관리비·단지·입지 정보를 함께 보존한다.
+- 조사 날짜별 매물 목록과 신규·변경·미노출·삭제·재노출 이력을 비교한다.
+- 대시보드, 조사 아파트 목록, 날짜별 아파트 상세, 개별 매물 상세 화면을 분리해 제공한다.
+- 매물 화면은 카드·리스트·테이블 방식과 조사일 간 사양 비교를 지원한다.
+- 자동 조사 스케줄, 중개사 상세 수집 여부, Chrome 탐색 속도, 인앱 변경 알림을 설정할 수 있다.
+- 아파트·매물·중개사 등록·상세정보·조사이력·변경 이벤트를 XLSX로 내려받을 수 있다.
+- 최초 관리자 등록, 로그인, 사용자별 데이터 분리, 사용자·권한 관리 기능을 제공한다.
+- Windows 단일 로컬 환경과 Docker Compose 환경을 모두 지원한다.
+
+완료 작업, 검증 근거, 커밋 이력과 남은 작업은 [프로젝트 작업 현황](docs/project-status.md)을 기준으로 확인한다. `docs/superpowers/plans/` 아래 문서는 각 작업을 설계·실행할 당시의 계획 이력이다.
+
 ### Docker 없이 로컬 실행
 
 Python 3.12~3.14, Node.js 22 LTS, Google Chrome을 설치한 뒤 PowerShell에서 실행한다.
@@ -70,7 +88,7 @@ $env:RUN_LIVE_NAVER_E2E = "1"
 - production 전수 수집에는 스크롤 횟수, 그룹 수, 물건 수의 고정 상한이 없다. 표시 건수를 채우지 못하거나 `중개사 n곳`의 상세 행을 모두 확보하지 못하면 불완전 결과를 저장하지 않고 fail-closed 처리한다.
 - 각 물건에서 지연 로딩되는 중개사 행을 끝까지 펼치고, 물건별 상세 슬라이드를 읽어 저장한다. `BrokerArticleSnapshot.details_json`에는 물건별 `market_details` 중첩 구조가 저장되며, 기존 스냅샷은 `None`으로 역직렬화된다.
 - React 등록 카드와 XLSX 중개사등록 시트는 물건별 상세 데이터를 반영한다. 표본 E2E의 25개 그룹 제한은 테스트 전용이며 production 전수 수집에는 적용하지 않는다.
-- 이번 실제 테스트 범위는 사용자 지시에 따라 아파트 1곳을 별도 실행하는 것으로 한정한다.
+- 실제 네이버 라이브 E2E는 기본 비활성 상태이며, 명시적 승인과 보호된 실행 환경이 준비된 경우에만 아파트 1곳을 대상으로 실행한다.
 
 ### 접속 주소
 
@@ -120,3 +138,7 @@ Set-Location .\backend
 $env:RUN_LIVE_NAVER_E2E = "1"
 ..\.venv\Scripts\python -m pytest tests/e2e/test_naver_live_scrape.py -m live_naver -q
 ```
+
+## Project Status
+
+The authoritative record of implemented capabilities, verification evidence, commit history, and remaining work is [docs/project-status.md](docs/project-status.md). Files under `docs/superpowers/plans/` are historical design and execution plans and may contain baselines that predate the current `main` branch.
